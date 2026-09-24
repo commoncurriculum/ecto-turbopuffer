@@ -45,7 +45,7 @@ defmodule Ecto.Adapters.Turbopuffer.TypesTest do
     {:ok, %{"schema" => stored}} =
       Repo
       |> Ecto.Adapters.Turbopuffer.client()
-      |> TP.Client.metadata(Ecto.Adapters.Turbopuffer.namespace(Everything, prefix))
+      |> Ecto.Adapters.Turbopuffer.Request.metadata(Ecto.Adapters.Turbopuffer.namespace(Everything, prefix))
 
     for attribute <- TP.__attributes__(Everything) do
       stored_entry = Map.fetch!(stored, attribute.name)

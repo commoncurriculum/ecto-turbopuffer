@@ -21,8 +21,8 @@ defmodule TP.Test.Case do
 
     on_exit(fn ->
       client = Ecto.Adapters.Turbopuffer.client(Repo)
-      {:ok, namespaces} = TP.Client.namespaces(client, prefix: prefix <> "-")
-      Enum.each(namespaces, &TP.Client.delete_namespace(client, &1))
+      {:ok, namespaces} = Ecto.Adapters.Turbopuffer.Request.namespaces(client, prefix <> "-")
+      Enum.each(namespaces, &Ecto.Adapters.Turbopuffer.Request.delete_namespace(client, &1))
     end)
 
     {:ok, prefix: prefix}

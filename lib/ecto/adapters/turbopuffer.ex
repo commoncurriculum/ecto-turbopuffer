@@ -11,7 +11,10 @@ defmodule Ecto.Adapters.Turbopuffer do
         api_key: System.fetch_env!("TURBOPUFFER_API_KEY"),
         region: "gcp-us-central1"
 
-  The repo also takes `TP.Client.new/1`'s `:base_url`, `:receive_timeout` and `:retry`.
+  Requests go through the `turbopuffer` driver, so the repo also takes `Turbopuffer.Client.new/1`'s options:
+  `:base_url`, `:finch_name`, `:json_library`, `:max_retries` and `:retry_delay`. `:receive_timeout` sets how
+  long to wait for a response, 60 seconds by default. For calls outside Ecto, `client/1` returns the repo's
+  `Turbopuffer.Client`.
 
   ## Namespaces
 
@@ -57,15 +60,15 @@ defmodule Ecto.Adapters.Turbopuffer do
   @behaviour Ecto.Adapter.Schema
   @behaviour Ecto.Adapter.Queryable
 
-  alias Ecto.Adapters.Turbopuffer.Query
+  alias Ecto.Adapters.Turbopuffer.{Query, Request}
 
   @embed_batch_size 30
   @batch_size 1_000
   @insert_only ["id", "Eq", nil]
   @existing ["id", "NotEq", nil]
 
-  @doc "The `TP.Client` behind a running repo."
-  @spec client(Ecto.Repo.t() | pid() | atom()) :: TP.Client.t()
+  @doc "The `Turbopuffer.Client` behind a running repo, for calls outside Ecto."
+  @spec client(Ecto.Repo.t() | pid() | atom()) :: Turbopuffer.Client.t()
   def client(repo), do: Ecto.Adapter.lookup_meta(repo).client
 
   @doc "The namespace `schema` reads and writes, under an optional Ecto prefix."
@@ -82,17 +85,17 @@ defmodule Ecto.Adapters.Turbopuffer do
   defmacro __before_compile__(_env), do: :ok
 
   @impl Ecto.Adapter
-  def ensure_all_started(_config, type), do: Application.ensure_all_started(:req, type)
+  def ensure_all_started(_config, type), do: Application.ensure_all_started(:turbopuffer, type)
 
   @impl Ecto.Adapter
   def init(config) do
     repo = Keyword.fetch!(config, :repo)
-    client = TP.Client.new(config)
     telemetry = {repo, Keyword.fetch!(config, :telemetry_prefix) ++ [:query]}
+    request_opts = [receive_timeout: Keyword.get(config, :receive_timeout, 60_000)]
 
-    # Requests go through Req's shared connection pool, so the repo has no processes of its own.
+    # Requests go through the driver's connection pool, so the repo has no processes of its own.
     child_spec = %{id: {__MODULE__, repo}, start: {Agent, :start_link, [fn -> :ok end]}}
-    {:ok, child_spec, %{client: client, telemetry: telemetry}}
+    {:ok, child_spec, %{client: Request.client(config), request_opts: request_opts, telemetry: telemetry}}
   end
 
   @impl Ecto.Adapter
@@ -359,9 +362,9 @@ defmodule Ecto.Adapters.Turbopuffer do
   defp write(meta, namespace, body, opts), do: request(meta, :write, namespace, body, opts)
   defp query(meta, namespace, body, opts), do: request(meta, :query, namespace, body, opts)
 
-  defp request(%{client: client, telemetry: {repo, event}}, kind, namespace, body, opts) do
+  defp request(%{client: client, telemetry: {repo, event}} = meta, kind, namespace, body, opts) do
     start = System.monotonic_time()
-    result = apply(TP.Client, kind, [client, namespace, body])
+    result = apply(Request, kind, [client, namespace, body, meta.request_opts])
 
     :telemetry.execute(event, %{total_time: System.monotonic_time() - start}, %{
       type: :ecto_turbopuffer_query,

@@ -15,6 +15,14 @@ Where the docs and the live API disagree, the live API wins, and a test should p
 - aggregation queries take `top_k`, not `limit`
 - patches can't change attributes turbopuffer embeds natively, not only vectors
 - deleting an id that doesn't exist still counts as deleted, unless the delete has a `delete_condition`
+- a multi-query ignores a top-level `top_k`; a top-level `limit` caps results fused with `rerank_by`
+
+## The driver
+
+HTTP goes through `commoncurriculum/turbopuffer`, a fork of `jallum/turbopuffer`. Its `combined` branch merges
+the fix branches we've proposed upstream. A driver change goes there first (as its own branch and upstream PR),
+then into `combined`; this repo only picks it up with `mix deps.update turbopuffer`. Keep schema-aware behavior,
+like typed decoding, here in `TP`: the driver returns plain maps.
 
 ## Commands
 

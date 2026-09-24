@@ -27,8 +27,9 @@ defmodule EctoTurbopuffer.MixProject do
   defp deps do
     [
       {:ecto, "~> 3.13"},
-      # 0.6.1 fixes EEF-CVE-2026-49755 and EEF-CVE-2026-49756.
-      {:req, "~> 0.6.1 or ~> 0.7"},
+      # Our fork's `combined` branch carries the fixes proposed upstream to jallum/turbopuffer.
+      {:turbopuffer, github: "commoncurriculum/turbopuffer", branch: "combined"},
+      # The driver uses Jason before Elixir 1.18.
       {:jason, "~> 1.4"},
       {:telemetry, "~> 1.0"}
     ]
