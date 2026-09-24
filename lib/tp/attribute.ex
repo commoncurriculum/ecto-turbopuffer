@@ -1,6 +1,7 @@
 defmodule TP.Attribute do
   @moduledoc """
-  Validates a `TP` field's turbopuffer options and renders its entry in a namespace schema.
+  A `TP` field's turbopuffer attribute: its name, type, and entry in the namespace schema. `TP.attributes/1` lists a
+  schema's attributes.
 
   Options mirror https://turbopuffer.com/docs/write#schema:
 
@@ -46,6 +47,54 @@ defmodule TP.Attribute do
   @id_types [:string, :uint, :uuid]
   @max_name_bytes 128
 
+  @enforce_keys [:name, :type, :schema_entry, :filterable]
+  defstruct [:field, :name, :type, :schema_entry, :filterable, primary_key: false]
+
+  @type t :: %__MODULE__{
+          field: atom() | nil,
+          name: String.t(),
+          type: TP.Types.t(),
+          schema_entry: %{String.t() => term()},
+          filterable: boolean(),
+          primary_key: boolean()
+        }
+
+  @doc """
+  Builds the attribute from a `TP` field's options. Raises `ArgumentError` when an option is invalid.
+  """
+  @spec new(keyword()) :: t()
+  def new(opts) do
+    type =
+      case Keyword.fetch(opts, :type) do
+        {:ok, type} -> TP.Types.decode(type)
+        :error -> raise ArgumentError, "TP fields need a turbopuffer `type:`, e.g. `type: \"string\"`"
+      end
+
+    entry = schema_entry(type, opts)
+
+    %__MODULE__{
+      field: opts[:field],
+      name: name(opts),
+      type: type,
+      schema_entry: entry,
+      filterable: filterable?(type, entry),
+      primary_key: opts[:primary_key] == true
+    }
+  end
+
+  @doc """
+  Why turbopuffer can't patch the attribute in place, or `nil` when it can.
+  """
+  @spec patch_error(t()) :: String.t() | nil
+  def patch_error(%__MODULE__{primary_key: true}), do: "turbopuffer ids can't change"
+
+  def patch_error(%__MODULE__{type: type, schema_entry: entry}) do
+    if match?({kind, _, _} when kind in [:vector, :multi_vector], type) or Map.has_key?(entry, "embed") do
+      "turbopuffer can't patch vectors or the text it embeds, so upsert the whole document with " <>
+        "`on_conflict: :replace_all`"
+    end
+  end
+
   @doc """
   Returns the attribute's schema entry, e.g. `%{"type" => "string", "full_text_search" => true}`.
   Raises `ArgumentError` when an option is unknown, malformed, or not supported by the type.
@@ -86,8 +135,10 @@ defmodule TP.Attribute do
     end
   end
 
+  defp name(opts), do: to_string(opts[:source] || opts[:field])
+
   defp validate_name!(opts, where) do
-    name = to_string(opts[:source] || opts[:field])
+    name = name(opts)
 
     cond do
       String.starts_with?(name, "$") ->
@@ -110,7 +161,7 @@ defmodule TP.Attribute do
             "turbopuffer ids must be string, uint, or uuid; got #{TP.Types.encode(type)} #{where}"
     end
 
-    if to_string(opts[:source] || opts[:field]) != "id" do
+    if name(opts) != "id" do
       raise ArgumentError, "turbopuffer ids must be named `id` (add `source: :id` to keep the field name) #{where}"
     end
 

@@ -53,9 +53,6 @@ defmodule TP.Query do
     any_gte: "AnyGte"
   ]
 
-  @doc false
-  def filters, do: Map.new(@filters, fn {_name, op} -> {op, true} end)
-
   for {name, op} <- @filters do
     template = op <> "(?, ?)"
 

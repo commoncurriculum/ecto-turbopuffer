@@ -132,6 +132,14 @@ defmodule Ecto.Adapters.Turbopuffer.WritesTest do
       end
     end
 
+    test "can't change an id" do
+      stack = Repo.insert!(card_stack("a"))
+
+      assert_raise ArgumentError, ~r/turbopuffer ids can't change/, fn ->
+        Repo.update(Ecto.Changeset.change(stack, id: "b"))
+      end
+    end
+
     test "raises on a document that's gone" do
       stack = Repo.insert!(card_stack("a"))
       Repo.delete!(stack)

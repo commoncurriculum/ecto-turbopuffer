@@ -2,7 +2,7 @@ defmodule TP do
   @moduledoc """
   Ecto type for turbopuffer attributes: the turbopuffer counterpart of `Ch`.
 
-      defmodule Spikey.Turbopuffer.CardStack do
+      defmodule MyApp.Search.CardStack do
         use Ecto.Schema
         use TP, distance_metric: :cosine_distance
 
@@ -31,6 +31,7 @@ defmodule TP do
       computed vectors count), 4 embedded attributes, and one distance metric, which namespaces with vector columns
       must declare.
     * `TP.distance_metric/1` is that distance metric, for the write's `distance_metric`.
+    * `TP.attributes/1` lists the schema's fields as `TP.Attribute`s.
     * `TP.dump/1` turns a struct into an `upsert_rows` row and `TP.dump_attribute/3` encodes a single value, such as
       a filter operand. Both enforce turbopuffer's value limits: 64-byte ids, 4 KiB filterable values, 8 MiB values,
       and 1,024 sparse dimensions.
@@ -138,15 +139,23 @@ defmodule TP do
     |> complete_row!(attributes(module), module)
   end
 
-  @doc false
-  def __attributes__(module), do: attributes(module)
+  @doc """
+  The attributes of a schema whose fields all use `TP`, in field order.
+  """
+  @spec attributes(module()) :: [TP.Attribute.t()]
+  def attributes(module) do
+    Enum.map(module.__schema__(:fields), fn field ->
+      case module.__schema__(:type, field) do
+        {:parameterized, {TP, attribute}} ->
+          attribute
 
-  @doc false
-  # turbopuffer rejects patches to vectors and to attributes it embeds.
-  def __patchable__?(%{type: {:vector, _, _}}), do: false
-  def __patchable__?(%{type: {:multi_vector, _, _}}), do: false
-  def __patchable__?(%{schema_entry: %{"embed" => _}}), do: false
-  def __patchable__?(_attribute), do: true
+        other ->
+          raise ArgumentError,
+                "#{inspect(module)}.#{field} has type #{inspect(other)}, but every turbopuffer attribute must use " <>
+                  "TP. turbopuffer has no nested attributes, so flatten embedded data into TP fields."
+      end
+    end)
+  end
 
   @doc """
   Encodes one value for `module`'s `field` the way turbopuffer expects it, e.g. a filter operand.
@@ -188,22 +197,7 @@ defmodule TP do
   # ------------------------------------------------------------------------------------------------
 
   @impl Ecto.ParameterizedType
-  def init(opts) do
-    type =
-      case Keyword.fetch(opts, :type) do
-        {:ok, type} -> TP.Types.decode(type)
-        :error -> raise ArgumentError, "TP fields need a turbopuffer `type:`, e.g. `type: \"string\"`"
-      end
-
-    entry = TP.Attribute.schema_entry(type, opts)
-
-    %{
-      type: type,
-      schema_entry: entry,
-      filterable: TP.Attribute.filterable?(type, entry),
-      primary_key: opts[:primary_key] == true
-    }
-  end
+  def init(opts), do: TP.Attribute.new(opts)
 
   @impl Ecto.ParameterizedType
   def type(%{type: type}), do: ecto_type(type)
@@ -238,26 +232,6 @@ defmodule TP do
   # ------------------------------------------------------------------------------------------------
   # PRIVATE
   # ------------------------------------------------------------------------------------------------
-
-  defp attributes(module) do
-    Enum.map(module.__schema__(:fields), fn field ->
-      module
-      |> params!(field)
-      |> Map.merge(%{field: field, name: Atom.to_string(module.__schema__(:field_source, field))})
-    end)
-  end
-
-  defp params!(module, field) do
-    case module.__schema__(:type, field) do
-      {:parameterized, {TP, params}} ->
-        params
-
-      other ->
-        raise ArgumentError,
-              "#{inspect(module)}.#{field} has type #{inspect(other)}, but every turbopuffer attribute must use TP. " <>
-                "turbopuffer has no nested attributes, so flatten embedded data into TP fields."
-    end
-  end
 
   defp validate_namespace!(attributes, module) do
     embedded = Enum.filter(attributes, &Map.has_key?(&1.schema_entry, "embed"))

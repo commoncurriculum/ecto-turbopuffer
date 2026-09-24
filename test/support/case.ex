@@ -21,8 +21,11 @@ defmodule TP.Test.Case do
 
     on_exit(fn ->
       client = Ecto.Adapters.Turbopuffer.client(Repo)
-      {:ok, namespaces} = Ecto.Adapters.Turbopuffer.Request.namespaces(client, prefix <> "-")
-      Enum.each(namespaces, &Ecto.Adapters.Turbopuffer.Request.delete_namespace(client, &1))
+      {:ok, %{namespaces: namespaces}} = Turbopuffer.Namespace.list(client, prefix: prefix <> "-")
+
+      for %{"id" => name} <- namespaces do
+        {:ok, _} = client |> Turbopuffer.Namespace.new(name) |> Turbopuffer.Namespace.delete()
+      end
     end)
 
     {:ok, prefix: prefix}

@@ -42,12 +42,14 @@ defmodule Ecto.Adapters.Turbopuffer.TypesTest do
   test "turbopuffer stores the schema TP declares", %{prefix: prefix} do
     Repo.insert!(everything())
 
+    namespace = Ecto.Adapters.Turbopuffer.namespace(Everything, prefix)
+
     {:ok, %{"schema" => stored}} =
       Repo
       |> Ecto.Adapters.Turbopuffer.client()
-      |> Ecto.Adapters.Turbopuffer.Request.metadata(Ecto.Adapters.Turbopuffer.namespace(Everything, prefix))
+      |> Turbopuffer.Client.get("/v1/namespaces/#{namespace}/metadata")
 
-    for attribute <- TP.__attributes__(Everything) do
+    for attribute <- TP.attributes(Everything) do
       stored_entry = Map.fetch!(stored, attribute.name)
 
       assert stored_entry["type"] == TP.Types.encode(attribute.type), "#{attribute.name}'s type"

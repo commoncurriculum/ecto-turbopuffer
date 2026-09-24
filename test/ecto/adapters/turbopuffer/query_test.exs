@@ -154,6 +154,24 @@ defmodule Ecto.Adapters.Turbopuffer.QueryTest do
         Repo.all(from c in CardStack, order_by: [asc_nulls_last: c.position], limit: 1)
       end
     end
+
+    test "each page after the first filters past the previous page's last id" do
+      rows =
+        for i <- 1..10_001 do
+          %{id: "p" <> String.pad_leading("#{i}", 5, "0"), position: 100 + i, vector: [1.0, 0.0, 0.0]}
+        end
+
+      Repo.insert_all(CardStack, rows)
+      handler = inspect(self())
+      :telemetry.attach(handler, [:tp, :test, :repo, :query], &__MODULE__.send_query/4, self())
+      on_exit(fn -> :telemetry.detach(handler) end)
+
+      assert ids(from c in CardStack, where: c.position > 100, order_by: [desc: c.id]) ==
+               rows |> Enum.map(& &1.id) |> Enum.reverse()
+
+      assert_received {:query, %{"filters" => ["position", "Gt", 100]}}
+      assert_received {:query, %{"filters" => ["And", [["position", "Gt", 100], ["id", "Lt", "p00002"]]]}}
+    end
   end
 
   describe "selects and aggregates" do
@@ -180,6 +198,11 @@ defmodule Ecto.Adapters.Turbopuffer.QueryTest do
       assert_raise Ecto.QueryError, ~r/counts documents, so use count\(\)/, fn ->
         Repo.aggregate(CardStack, :count, :title)
       end
+    end
+
+    test "schemaless queries send field names as they are" do
+      assert Repo.all(from c in "card_stacks", where: c.planbook_id == "history", select: {c.id, c.position}) ==
+               [{"revolution", 3}]
     end
   end
 
@@ -286,10 +309,18 @@ defmodule Ecto.Adapters.Turbopuffer.QueryTest do
       top = fn weights -> Repo.all(union_all(text, ^vector), rerank_by: {:rrf, weights: weights, limit: 1}) end
       assert Enum.map(top.([5, 1]), & &1.id) == ~w(photosynthesis)
       assert Enum.map(top.([1, 5]), & &1.id) == ~w(revolution)
+
+      assert_raise ArgumentError, ~r/unknown keys \[:wieghts\]/, fn ->
+        Repo.all(union_all(text, ^vector), rerank_by: {:rrf, wieghts: [1, 5]})
+      end
     end
   end
 
   test "consistency: :eventual" do
     assert length(Repo.all(CardStack, consistency: :eventual)) in 0..4
+  end
+
+  def send_query(_event, _measurements, %{query: body}, test) do
+    if self() == test, do: send(test, {:query, body})
   end
 end
