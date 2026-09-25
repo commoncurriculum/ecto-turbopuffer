@@ -282,7 +282,7 @@ defmodule Ecto.Adapters.Turbopuffer.QueryTest do
 
       assert_in_delta distance, 1.0, 0.0001
 
-      assert_raise Ecto.QueryError, ~r/ANN ranks the closest vectors first, so order it asc/, fn ->
+      assert_raise Ecto.QueryError, ~r/vector search ranks the closest vectors first, so order it asc/, fn ->
         Repo.all(from c in CardStack, order_by: [desc: ann(c.vector, ^[1.0, 0.0, 0.0])], limit: 1)
       end
     end

@@ -324,7 +324,7 @@ defmodule Ecto.Adapters.Turbopuffer.PlanTest do
       end
 
       plan = plan(from c in CardStack, group_by: c.planbook_id, select: {c.planbook_id, count()}, limit: 100)
-      assert plan.body == %{"aggregate_by" => %{"ecto_1" => ["Count"]}, "group_by" => ["planbook_id"], "limit" => 100}
+      assert plan.body == %{"aggregate_by" => %{"ecto_1" => ["Count"]}, "group_by" => ["planbook_id"], "top_k" => 100}
 
       assert Plan.page(plan, %{"aggregation_groups" => [%{"planbook_id" => "a", "ecto_1" => 3}]}) == {[["a", 3]], nil}
       assert Plan.empty_page(plan) == {[], nil}

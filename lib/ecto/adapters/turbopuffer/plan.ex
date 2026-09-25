@@ -216,7 +216,8 @@ defmodule Ecto.Adapters.Turbopuffer.Plan do
       %{"aggregate_by" => aggregates}
       |> put("filters", filters(ctx, nil))
       |> put("group_by", if(group_by != [], do: group_by))
-      |> put("limit", if(group_by != [], do: limit))
+      # Aggregations reject `limit`, though the docs call top_k its alias.
+      |> put("top_k", if(group_by != [], do: limit))
 
     kind = if group_by == [], do: :aggregate, else: :groups
     %__MODULE__{kind: kind, namespace: ctx.name, body: body, readers: readers}
