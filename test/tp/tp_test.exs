@@ -1,4 +1,6 @@
 defmodule TPTest do
+  # How the TP type casts, encodes and decodes values, without turbopuffer. types_test.exs round-trips every type
+  # through turbopuffer itself.
   use ExUnit.Case, async: true
 
   defmodule Doc do
@@ -7,8 +9,7 @@ defmodule TPTest do
 
     @primary_key {:id, TP, type: "string", autogenerate: false}
     schema "docs" do
-      field :title, TP, type: "string", full_text_search: [language: :english, stemming: true]
-      field :planbook_id, TP, type: "string", source: :planbookId
+      field :title, TP, type: "string"
       field :standard_ids, TP, type: "[]string"
       field :position, TP, type: "int"
       field :views, TP, type: "uint"
@@ -55,11 +56,11 @@ defmodule TPTest do
       end
     end
 
-    test "sets the namespace's distance metric" do
+    test "sets the namespace's distance metric and shards" do
       [{module, _}] =
         compile("""
         use Ecto.Schema
-        use TP, distance_metric: :euclidean_squared
+        use TP, distance_metric: :euclidean_squared, num_shards: 4
 
         @primary_key {:id, TP, type: "string", autogenerate: false}
         schema "docs" do
@@ -67,36 +68,41 @@ defmodule TPTest do
         end
         """)
 
-      assert module.__tp__(:distance_metric) == "euclidean_squared"
+      assert {module.__tp__(:distance_metric), module.__tp__(:num_shards)} == {"euclidean_squared", 4}
     end
 
-    test "rejects unknown options and distance metrics" do
-      assert_raise ArgumentError, ~r/unknown keys \[:distance\]/, fn ->
-        compile("use Ecto.Schema\nuse TP, distance: :cosine_distance")
-      end
-
-      assert_raise ArgumentError, ~r/:distance_metric must be :cosine_distance or :euclidean_squared, got: :dot/, fn ->
-        compile("use Ecto.Schema\nuse TP, distance_metric: :dot")
+    test "rejects unknown options, distance metrics and shard counts" do
+      for {options, message} <- [
+            {"distance: :cosine_distance", ~r/unknown keys \[:distance\]/},
+            {"distance_metric: :dot", ~r/:distance_metric must be :cosine_distance or :euclidean_squared, got: :dot/},
+            {"num_shards: 0", ~r/:num_shards must be an integer from 1 to 256, got: 0/},
+            {"num_shards: 257", ~r/got: 257/}
+          ] do
+        assert_raise ArgumentError, message, fn -> compile("use Ecto.Schema\nuse TP, #{options}") end
       end
     end
   end
 
-  describe "cast" do
-    test "takes loose values the way Ecto's types do" do
-      assert cast(:position, "7") == {:ok, 7}
-      assert cast(:score, 2) == {:ok, 2.0}
-      assert cast(:owner_uuid, "769C134D-07B8-4225-954A-B6CC5FFC320C") == {:ok, "769c134d-07b8-4225-954a-b6cc5ffc320c"}
-      assert cast(:updated_at, "2026-09-24") == {:ok, ~U[2026-09-24 00:00:00.000Z]}
-      assert cast(:updated_at, ~U[2026-09-24 08:00:00.123456Z]) == {:ok, ~U[2026-09-24 08:00:00.123Z]}
+  test "casts loose values the way Ecto's types do" do
+    assert cast(:position, "7") == {:ok, 7}
+    assert cast(:score, 2) == {:ok, 2.0}
+    assert cast(:owner_uuid, "769C134D-07B8-4225-954A-B6CC5FFC320C") == {:ok, "769c134d-07b8-4225-954a-b6cc5ffc320c"}
+    assert cast(:updated_at, "2026-09-24") == {:ok, ~U[2026-09-24 00:00:00.000Z]}
+    assert cast(:updated_at, ~U[2026-09-24 08:00:00.123456Z]) == {:ok, ~U[2026-09-24 08:00:00.123Z]}
 
-      assert cast(:dates, [~D[2026-09-24], ~N[2026-09-24 08:00:00]]) ==
-               {:ok, [~U[2026-09-24 00:00:00.000Z], ~U[2026-09-24 08:00:00.000Z]]}
+    assert cast(:dates, [~D[2026-09-24], ~N[2026-09-24 08:00:00]]) ==
+             {:ok, [~U[2026-09-24 00:00:00.000Z], ~U[2026-09-24 08:00:00.000Z]]}
 
-      assert cast(:embedding, [1, 0, -1]) == {:ok, [1.0, 0.0, -1.0]}
-      assert cast(:sparse, %{fraction: 1}) == {:ok, %{"fraction" => 1.0}}
-      assert cast(:title, nil) == {:ok, nil}
-    end
+    assert cast(:embedding, [1, 0, -1]) == {:ok, [1.0, 0.0, -1.0]}
+    assert cast(:sparse, %{fraction: 1}) == {:ok, %{"fraction" => 1.0}}
+    assert cast(:title, nil) == {:ok, nil}
 
+    changeset = Ecto.Changeset.cast(%Doc{}, %{"position" => "7", "embedding" => [1, 2, 3]}, [:position, :embedding])
+    assert changeset.changes == %{position: 7, embedding: [1.0, 2.0, 3.0]}
+    refute Ecto.Changeset.cast(%Doc{}, %{"embedding" => [1, 2]}, [:embedding]).valid?
+  end
+
+  test "casts nothing that doesn't fit the type" do
     for {field, value} <- [
           embedding: [1.0, 2.0],
           embedding: [1.0e39, 0, 0],
@@ -114,116 +120,54 @@ defmodule TPTest do
           sparse: %{"fraction" => 70_000.0},
           title: 42
         ] do
-      test "rejects #{inspect(value)} for #{field}" do
-        assert cast(unquote(field), unquote(Macro.escape(value))) == :error
-      end
+      assert cast(field, value) == :error, "#{field}: #{inspect(value)}"
     end
   end
 
-  describe "dump" do
-    test "encodes each value the way turbopuffer's API expects" do
-      for {field, value, dumped} <- [
-            {:id, "5f1b2c3d4e5f6a7b8c9d0e1f", "5f1b2c3d4e5f6a7b8c9d0e1f"},
-            {:title, "Fractions", "Fractions"},
-            {:standard_ids, ["s1", "s2"], ["s1", "s2"]},
-            {:position, -3, -3},
-            {:views, 18_446_744_073_709_551_615, 18_446_744_073_709_551_615},
-            {:score, 0.5, 0.5},
-            {:is_public, false, false},
-            {:owner_uuid, "769c134d-07b8-4225-954a-b6cc5ffc320c", "769c134d-07b8-4225-954a-b6cc5ffc320c"},
-            {:owner_uuid, "769C134D-07B8-4225-954A-B6CC5FFC320C", "769c134d-07b8-4225-954a-b6cc5ffc320c"},
-            {:updated_at, ~U[2026-09-24 12:34:56.123456Z], "2026-09-24T12:34:56.123Z"},
-            {:dates, [~U[2026-09-01 00:00:00.000Z]], ["2026-09-01T00:00:00.000Z"]},
-            {:thumbnail, <<0, 1, 255>>, "AAH/"},
-            {:embedding, [0.25, -0.5, 1.0], f32_base64([0.25, -0.5, 1.0])},
-            {:embedding, [1, 0, -1], f32_base64([1.0, 0.0, -1.0])},
-            {:half_embedding, [0.5, -2.0], f32_base64([0.5, -2.0])},
-            {:small_embedding, [-128, 127], f32_base64([-128, 127])},
-            {:token_vectors, [[0.5, 0.25], [1.0, -1.0]], [[0.5, 0.25], [1.0, -1.0]]},
-            {:sparse, %{"fraction" => 0.5}, %{"fraction" => 0.5}},
-            {:title, nil, nil}
-          ] do
-        assert dump(field, value) == {:ok, dumped}, "#{field}: #{inspect(value)}"
-      end
+  test "dumps only values that already fit the type, leaving write limits to writes" do
+    for {field, value} <- [
+          position: "7",
+          views: -1,
+          owner_uuid: "not-a-uuid",
+          owner_uuid: <<0::128>>,
+          updated_at: ~N[2026-09-24 08:00:00],
+          updated_at: "2026-09-24",
+          dates: [~U[2026-09-01 00:00:00Z], nil],
+          half_embedding: [70_000.0, 0],
+          sparse: %{fraction: 1.0},
+          sparse: %{"fraction" => 70_000.0},
+          title: 42
+        ] do
+      assert dump(field, value) == :error, "#{field}: #{inspect(value)}"
     end
 
-    test "only encodes values that already fit the type" do
-      for {field, value} <- [
-            position: "7",
-            views: -1,
-            owner_uuid: "not-a-uuid",
-            owner_uuid: <<0::128>>,
-            updated_at: ~N[2026-09-24 08:00:00],
-            updated_at: "2026-09-24",
-            dates: [~U[2026-09-01 00:00:00Z], nil],
-            half_embedding: [70_000.0, 0],
-            sparse: %{fraction: 1.0},
-            sparse: %{"fraction" => 70_000.0},
-            title: 42
-          ] do
-        assert dump(field, value) == :error, "#{field}: #{inspect(value)}"
-      end
-    end
-
-    test "leaves write limits to writes, so filters can compare against any value" do
-      assert dump(:id, String.duplicate("a", 65)) == {:ok, String.duplicate("a", 65)}
-      assert dump(:planbook_id, String.duplicate("a", 4_097)) == {:ok, String.duplicate("a", 4_097)}
-    end
+    # Filters compare against any value, like an id Repo.get is given.
+    assert dump(:id, String.duplicate("a", 65)) == {:ok, String.duplicate("a", 65)}
   end
 
-  describe "load" do
-    test "decodes turbopuffer's response encodings" do
-      for {field, value, loaded} <- [
-            {:updated_at, "2026-09-24T12:34:56.123000000Z", ~U[2026-09-24 12:34:56.123Z]},
-            {:dates, ["2026-01-02T03:04:05.000000000Z"], [~U[2026-01-02 03:04:05.000Z]]},
-            {:thumbnail, "AAH/", <<0, 1, 255>>},
-            {:embedding, f32_base64([0.25, -0.5, 1.0]), [0.25, -0.5, 1.0]},
-            {:embedding, [0.25, -0.5, 1.0], [0.25, -0.5, 1.0]},
-            # base64 vectors are f32, whatever the element type.
-            {:half_embedding, f32_base64([0.5, 1.25]), [0.5, 1.25]},
-            {:small_embedding, f32_base64([-3, 7]), [-3, 7]},
-            {:small_embedding, [-128.0, 127.0], [-128, 127]},
-            {:token_vectors, [[0.5, 0.25]], [[0.5, 0.25]]},
-            {:sparse, %{"fraction" => 0.5}, %{"fraction" => 0.5}},
-            {:title, nil, nil}
-          ] do
-        assert load(field, value) == {:ok, loaded}, "#{field}: #{inspect(value)}"
-      end
+  test "loads turbopuffer's response encodings, and nothing that doesn't fit the type" do
+    for {field, value, loaded} <- [
+          {:updated_at, "2026-09-24T12:34:56.123000000Z", ~U[2026-09-24 12:34:56.123Z]},
+          {:thumbnail, "AAH/", <<0, 1, 255>>},
+          # base64 vectors come back in their own element type, as turbopuffer sent these.
+          {:embedding, "AACAPgAAAL8AAIA/", [0.25, -0.5, 1.0]},
+          {:half_embedding, "ADgAvQ==", [0.5, -1.25]},
+          {:small_embedding, "gH8=", [-128, 127]},
+          {:small_embedding, [-128.0, 127.0], [-128, 127]},
+          {:token_vectors, [[0.5, 0.25]], [[0.5, 0.25]]}
+        ] do
+      assert load(field, value) == {:ok, loaded}, "#{field}: #{inspect(value)}"
     end
 
-    test "rejects values that don't fit the schema" do
-      assert load(:thumbnail, "not base64!") == :error
-      assert load(:embedding, f32_base64([1.0, 2.0])) == :error
-      assert load(:half_embedding, f32_base64([70_000.0, 0.0])) == :error
-      assert load(:small_embedding, f32_base64([1.5, 0.0])) == :error
+    for {field, value} <- [
+          thumbnail: "not base64!",
+          embedding: f32_base64([1.0, 2.0]),
+          half_embedding: f32_base64([0.5, -1.25]),
+          small_embedding: f32_base64([-128, 127]),
+          half_embedding: [70_000.0, 0.0],
+          small_embedding: [1.5, 0.0]
+        ] do
+      assert load(field, value) == :error, "#{field}: #{inspect(value)}"
     end
-  end
-
-  test "autogenerates uuids" do
-    assert {:ok, _} = Ecto.UUID.cast(TP.autogenerate(TP.Attribute.new(type: "uuid", field: :id, primary_key: true)))
-  end
-
-  test "changesets cast through the turbopuffer type" do
-    changeset =
-      Ecto.Changeset.cast(
-        %Doc{},
-        %{"position" => "7", "updated_at" => "2026-09-24", "embedding" => [1, 2, 3], "standard_ids" => ["a"]},
-        [:position, :updated_at, :embedding, :standard_ids]
-      )
-
-    assert changeset.valid?
-
-    assert changeset.changes == %{
-             position: 7,
-             updated_at: ~U[2026-09-24 00:00:00.000Z],
-             embedding: [1.0, 2.0, 3.0],
-             standard_ids: ["a"]
-           }
-
-    refute Ecto.Changeset.cast(%Doc{}, %{"embedding" => [1, 2]}, [:embedding]).valid?
-  end
-
-  test "formats the type with its turbopuffer type string" do
-    assert Ecto.Type.format(type(:standard_ids)) == "#TP<[]string>"
   end
 end

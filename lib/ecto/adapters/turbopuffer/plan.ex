@@ -5,6 +5,8 @@ defmodule Ecto.Adapters.Turbopuffer.Plan do
 
   alias Ecto.Adapters.Turbopuffer.Expr
 
+  require Ecto.Query
+
   @max_limit 10_000
   @max_queries 16
   @batch_size 1_000
@@ -22,7 +24,7 @@ defmodule Ecto.Adapters.Turbopuffer.Plan do
 
   @doc """
   Plans a `Repo.all` query. A `union_all` becomes one multi-query, fused into one ranking when `opts` has
-  `:rerank_by`.
+  `:rerank_by`. `:limit_per` caps the rows sharing values of some fields.
   """
   def all(query, params, opts) do
     rerank_by = Keyword.get(opts, :rerank_by)
@@ -33,13 +35,30 @@ defmodule Ecto.Adapters.Turbopuffer.Plan do
           raise ArgumentError, "rerank_by fuses the searches of a union_all, but this query has only one"
 
         [query] ->
-          plan(query, params)
+          query |> plan(params) |> limit_per(query, Keyword.get(opts, :limit_per))
 
         legs ->
+          if opts[:limit_per], do: raise(ArgumentError, "limit_per can't cap a union_all's rows")
           multi(query, Enum.map(legs, &plan(&1, params)), rerank_by)
       end
 
     %{plan | body: put(plan.body, "consistency", consistency(Keyword.get(opts, :consistency)))}
+  end
+
+  @doc """
+  The body of a recall evaluation (docs/turbopuffer/recall.md): the query's filters, its vector search as the
+  rank_by, and its limit as top_k, unless `opts` sets `:top_k` or `:num`.
+  """
+  def recall(query, params, opts) do
+    ctx = context(query, params, :all)
+    opts = Keyword.validate!(opts, [:num, :top_k, :prefix, :telemetry_options])
+    rank_by = if query.order_bys != [], do: ctx |> Expr.rank_by() |> elem(0)
+
+    %{}
+    |> put("filters", filters(ctx, nil))
+    |> put("rank_by", rank_by)
+    |> put("top_k", opts[:top_k] || if(query.limit, do: limit(ctx)))
+    |> put("num", opts[:num])
   end
 
   def update_all(query, params) do
@@ -71,23 +90,25 @@ defmodule Ecto.Adapters.Turbopuffer.Plan do
   @doc """
   Upserts rows of dumped fields in batches, given Ecto's schema metadata. `on_conflict: :raise` and `:nothing`
   only insert new ids, and `:raise` has turbopuffer return the ids it wrote, so the adapter can name the ones it
-  skipped.
+  skipped. `opts` takes `:batch_size`, `:replace_if` and `:disable_backpressure`.
   """
-  def upserts(%{schema: schema} = schema_meta, rows, on_conflict, batch_size) do
+  def upserts(%{schema: schema} = schema_meta, rows, on_conflict, opts) do
     namespace = TP.Namespace.new(schema || raise(ArgumentError, "turbopuffer writes need a schema for the types"))
-    condition = upsert_condition!(namespace, on_conflict)
+    condition = upsert_condition!(namespace, on_conflict, opts[:replace_if])
+    backpressure = disable_backpressure!(opts[:disable_backpressure], condition)
     params = TP.Namespace.write_params(namespace)
     name = name(schema_meta)
 
     rows
     |> Enum.map(&TP.Namespace.row!(namespace, &1))
-    |> Enum.chunk_every(batch_size!(batch_size, namespace))
+    |> Enum.chunk_every(batch_size!(opts[:batch_size], namespace))
     |> Enum.map(fn batch ->
       body =
         params
         |> Map.put("upsert_rows", batch)
         |> put("upsert_condition", condition)
         |> put("return_affected_ids", if(elem(on_conflict, 0) == :raise, do: true))
+        |> put("disable_backpressure", backpressure)
 
       %__MODULE__{kind: :write, namespace: name, body: body}
     end)
@@ -175,6 +196,7 @@ defmodule Ecto.Adapters.Turbopuffer.Plan do
       |> put("offset", offset)
       |> put("include_attributes", if(include != [], do: include))
       |> put("compute_attributes", if(compute != %{}, do: compute))
+      |> put("vector_encoding", if(Enum.any?(include, &vector?(ctx, &1)), do: "base64"))
 
     %__MODULE__{kind: :rows, namespace: name(query), body: body, readers: readers, cursor: cursor}
   end
@@ -240,7 +262,10 @@ defmodule Ecto.Adapters.Turbopuffer.Plan do
         namespaces -> Expr.error!(query, "a union_all runs against one namespace, not #{Enum.join(namespaces, ", ")}")
       end
 
-    body = Map.merge(%{"queries" => Enum.map(legs, & &1.body)}, rerank(rerank_by, length(legs)))
+    # turbopuffer takes vector_encoding on the multi-query, not its queries.
+    encoding = Enum.find_value(legs, & &1.body["vector_encoding"])
+    queries = Enum.map(legs, &Map.delete(&1.body, "vector_encoding"))
+    body = %{"queries" => queries} |> put("vector_encoding", encoding) |> Map.merge(rerank(rerank_by, length(legs)))
 
     if rerank_by do
       [%{readers: readers} | _] = legs
@@ -336,12 +361,6 @@ defmodule Ecto.Adapters.Turbopuffer.Plan do
       not match?({source, _} when is_binary(source), query.from.source) ->
         Expr.error!(query, "turbopuffer has no subqueries")
 
-      operation != :all and query.order_bys != [] ->
-        Expr.error!(query, "#{operation} can't be ordered")
-
-      operation != :all and (query.limit || query.offset) ->
-        Expr.error!(query, "#{operation} can't take a limit")
-
       operation != :all and query.select ->
         Expr.error!(query, "turbopuffer's #{operation} can't return rows")
 
@@ -404,6 +423,10 @@ defmodule Ecto.Adapters.Turbopuffer.Plan do
     {readers, include |> Enum.reverse() |> Enum.uniq(), compute}
   end
 
+  # Vectors read back smaller and faster as base64. Schemaless queries don't know which attributes are vectors.
+  defp vector?(%Expr{namespace: nil}, _name), do: false
+  defp vector?(%Expr{namespace: namespace}, name), do: TP.Types.vector?(namespace.by_name[name].type)
+
   defp aggregate?({agg, _, _}) when agg in [:count, :sum, :avg, :min, :max], do: true
   defp aggregate?(_field), do: false
 
@@ -453,14 +476,19 @@ defmodule Ecto.Adapters.Turbopuffer.Plan do
     raise ArgumentError, ":batch_size must be an integer above 0, got: #{inspect(size)}"
   end
 
-  defp upsert_condition!(_namespace, {mode, _, _}) when mode in [:raise, :nothing], do: Expr.nothing()
+  defp upsert_condition!(_namespace, {mode, _, _}, nil) when mode in [:raise, :nothing], do: Expr.nothing()
 
-  defp upsert_condition!(namespace, {fields, _, _}) when is_list(fields) do
+  defp upsert_condition!(_namespace, {mode, _, _}, _replace_if) when mode in [:raise, :nothing] do
+    raise ArgumentError,
+          ":replace_if decides when to replace an existing document, so it needs on_conflict: :replace_all"
+  end
+
+  defp upsert_condition!(namespace, {fields, _, _}, replace_if) when is_list(fields) do
     replaced = Enum.map(fields, &Atom.to_string/1)
 
     case for(%{primary_key: false, name: name} <- namespace.attributes, do: name) -- replaced do
       [] ->
-        nil
+        replace_if && replace_if!(namespace, replace_if)
 
       missing ->
         raise ArgumentError,
@@ -469,9 +497,76 @@ defmodule Ecto.Adapters.Turbopuffer.Plan do
     end
   end
 
-  defp upsert_condition!(_namespace, _on_conflict) do
+  defp upsert_condition!(_namespace, _on_conflict, _replace_if) do
     raise ArgumentError, "turbopuffer can't run an update on conflict; use :replace_all, :nothing, or :raise"
   end
+
+  # The filter an existing document must match to be replaced, where ref_new(field) is the value being written.
+  defp replace_if!(namespace, replace_if) do
+    query =
+      case replace_if do
+        %Ecto.Query.DynamicExpr{} -> Ecto.Query.where(namespace.module, ^replace_if)
+        %Ecto.Query{} -> replace_if
+        other -> raise ArgumentError, ":replace_if must be a dynamic or a query, got: #{inspect(other)}"
+      end
+
+    {query, _cast, params} = Ecto.Adapter.Queryable.plan_query(:all, Ecto.Adapters.Turbopuffer, query)
+    ctx = %Expr{query: query, params: params, namespace: namespace, condition: true}
+    ctx |> Expr.filters() |> Expr.filter_json(nil)
+  end
+
+  # turbopuffer only skips backpressure for writes that don't read existing documents first.
+  defp disable_backpressure!(nil, _condition), do: nil
+  defp disable_backpressure!(false, _condition), do: nil
+  defp disable_backpressure!(true, nil), do: true
+
+  defp disable_backpressure!(true, _condition) do
+    raise ArgumentError,
+          "turbopuffer can't disable backpressure for conditional writes, so pass on_conflict: :replace_all " <>
+            "without :replace_if"
+  end
+
+  defp disable_backpressure!(other, _condition) do
+    raise ArgumentError, ":disable_backpressure must be a boolean, got: #{inspect(other)}"
+  end
+
+  # turbopuffer's limit.per, which needs a limit: capping rows per page wouldn't cap them overall.
+  defp limit_per(plan, _query, nil), do: plan
+
+  defp limit_per(%{kind: :rows, cursor: nil} = plan, query, {fields, limit})
+       when is_list(fields) and fields != [] and is_integer(limit) and limit > 0 do
+    {source, schema, _prefix} = elem(query.sources, 0)
+    names = Enum.map(fields, &per_attribute!(query, schema, source, &1))
+
+    %{
+      plan
+      | body: Map.update!(plan.body, "limit", &%{"total" => &1, "per" => %{"attributes" => names, "limit" => limit}})
+    }
+  end
+
+  defp limit_per(%{kind: :rows, cursor: nil}, _query, other) do
+    raise ArgumentError, ":limit_per must be {fields, limit}, like {[:planbook_id], 2}, got: #{inspect(other)}"
+  end
+
+  defp limit_per(%{kind: :rows}, query, _limit_per), do: Expr.error!(query, "limit_per needs a query with a limit")
+  defp limit_per(_plan, query, _limit_per), do: Expr.error!(query, "limit_per caps rows, not aggregations")
+
+  defp per_attribute!(_query, nil, _source, field) when is_atom(field), do: Atom.to_string(field)
+
+  defp per_attribute!(query, schema, _source, field) when is_atom(field) do
+    namespace = TP.Namespace.new(schema)
+
+    case Enum.find(namespace.attributes, &(&1.field == field)) do
+      nil ->
+        Expr.error!(query, "#{inspect(schema)} has no field #{inspect(field)} for limit_per")
+
+      attribute ->
+        if message = TP.Attribute.missing(attribute, :filter), do: Expr.error!(query, message), else: attribute.name
+    end
+  end
+
+  defp per_attribute!(query, _schema, _source, field),
+    do: Expr.error!(query, "limit_per takes field names, got: #{inspect(field)}")
 
   defp id_and_condition(filters) do
     {id, others} = Keyword.pop!(filters, :id)

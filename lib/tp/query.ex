@@ -11,15 +11,32 @@ defmodule TP.Query do
   Ranking, for `order_by` (see `docs/turbopuffer/query.md#param-rank_by`):
 
     * `bm25(field, text)` - full-text relevance, highest first, so order it `desc`. Takes `^%{last_as_prefix: true}`
-      as a third argument for type-ahead.
+      as a third argument for type-ahead. A `pre_tokenized_array` field takes a list of tokens instead of text.
     * `ann(field, vector)` and `knn(field, vector)` - approximate and exact vector search, closest first, so order
       them `asc`. The vector can be `embed(^text)` to rank a field that turbopuffer embeds natively, or
-      `embed(^text, ^model)` to name the model, which ranking a vector field needs.
+      `embed(^text, ^model)` to name the model, which ranking a vector field needs. `knn` needs a `where`.
     * `sparse_knn(field, weights)` - sparse vector search, highest first.
-    * `+` sums scores, `number * score` weights one, and `max_score(a, b)` takes the higher.
+    * `attribute(field)` - a number field's value, highest first. turbopuffer only ranks by scores of at least 0, so
+      a signed field's negative values score 0.
+    * `distance(field, origin)` - how far a number or datetime field is from `origin`, farthest first. Usually
+      passed to `decay/2`, to favour documents near the origin.
+    * `saturate(score, midpoint)` maps a score into 0..1, reaching 0.5 at `midpoint`, and `decay(score, midpoint)`
+      is its inverse, 1 at 0 and falling to 0.5 at `midpoint`. Both take an exponent as a third argument (1 by
+      default). A datetime distance's midpoint can be milliseconds or a duration like `"6h"`.
+    * A filter scores 1 where it matches and 0 elsewhere, so `bm25(c.title, ^text) + 2.0 * (c.species == "whale")`
+      boosts whales. Documents scoring 0 overall aren't returned.
+    * `+` sums scores, `number * score` weights one, and `max_score(a, b)` takes the higher, where either can be a
+      number.
 
-  `dist()` selects the rank score, turbopuffer's `$dist`. `bm25/2` and `vector_distance/2` in a `select` return
-  that score for each row without ranking by it.
+  Selecting, for `select`:
+
+    * `dist()` - the rank score, turbopuffer's `$dist`.
+    * Any score but a vector search, e.g. `bm25(c.markdown, ^text)` or `saturate(attribute(c.views), 100)`,
+      computed for each row without ranking by it, and `vector_distance(field, vector)` for a vector's distance.
+    * `highlight(field)` - the fragments of a full-text field that match the query's `bm25` on it, as maps with
+      `"text"`. Pass a map of turbopuffer's options as a second argument (`fragment_by`, `fragment_limit`,
+      `include_offsets`, and `rank_fragments_by`, which a query not ranked by the field's `bm25` needs). See
+      `docs/turbopuffer/query.md#param-compute_attributes`.
 
   Filters, for `where`, beyond Ecto's own `==`, `in`, `like`, `is_nil`, and so on
   (see `docs/turbopuffer/query.md#filtering-parameters`):
@@ -33,6 +50,8 @@ defmodule TP.Query do
     * `contains(array_field, value)`, `contains_any(array_field, values)`, and `any_lt/2`, `any_lte/2`,
       `any_gt/2`, `any_gte/2` for arrays. Ecto only allows `value in array_field` on its own array types, so use
       `contains/2` instead.
+    * `ref_new(field)`, only in `Repo.insert`'s `:replace_if`, is the value being written, e.g.
+      `dynamic([c], c.updated_at < ref_new(c.updated_at))`.
 
   Option arguments are maps, because Ecto doesn't allow keyword lists inside fragments.
 
@@ -50,10 +69,10 @@ defmodule TP.Query do
   }
 
   # Each macro's turbopuffer operator:
-  #   * `arities` - the longer one's last argument is an options map, except for `embed`
+  #   * `arities` - the longer one's last argument is an options map, except for `embed`, `saturate` and `decay`
   #   * `needs` - the attribute capability it needs (see TP.Attribute)
-  #   * `role` - a filter, a score ranked best first in the given direction, `embed`'s vector query, a way to
-  #     combine scores, or `$dist`
+  #   * `role` - a filter, a score ranked best first in the given direction, a `:transform` of a score, `embed`'s
+  #     vector query, a way to combine scores, `$dist`, `:highlight`, or `:ref_new`
   #   * `defaults` - the options sent when none are given
   #   * `select` - whether turbopuffer computes it per row in a select (compute_attributes)
   #   * `vector_query` - whether its second argument is a vector that can be `embed(text)`
@@ -75,10 +94,16 @@ defmodule TP.Query do
     ann: [op: "ANN", arities: [2], needs: :ann, role: {:score, :asc}, vector_query: true],
     knn: [op: "kNN", arities: [2], needs: :vector, role: {:score, :asc}, vector_query: true],
     sparse_knn: [op: "SparseKNN", arities: [2], needs: :sparse_knn, role: {:score, :desc}],
-    vector_distance: [op: "VectorDist", arities: [2], needs: :vector, select: true, vector_query: true],
+    attribute: [op: "Attribute", arities: [1], needs: :rank, role: {:score, :desc}, select: true],
+    distance: [op: "Dist", arities: [2], needs: :rank, role: {:score, :desc}, select: true],
+    saturate: [op: "Saturate", arities: [2, 3], role: :transform, select: true],
+    decay: [op: "Decay", arities: [2, 3], role: :transform, select: true],
+    vector_distance: [op: "VectorDist", arities: [2], needs: :vector, select: true],
+    highlight: [op: "Highlight", arities: [1, 2], needs: :full_text_search, role: :highlight],
     embed: [op: "Embed", arities: [1, 2], role: :embed],
     max_score: [op: "Max", arities: [2], role: :max],
-    dist: [op: "$dist", arities: [0], role: :dist]
+    dist: [op: "$dist", arities: [0], role: :dist],
+    ref_new: [op: "$ref_new", arities: [1], role: :ref_new]
   ]
 
   for {name, spec} <- @operators, arity <- spec[:arities] do

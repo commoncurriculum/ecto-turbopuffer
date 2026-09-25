@@ -77,12 +77,164 @@ defmodule Ecto.Adapters.Turbopuffer do
 
   @doc "The `Turbopuffer.Client` behind a running repo, for calls outside Ecto."
   @spec client(Ecto.Repo.t() | pid() | atom()) :: Turbopuffer.Client.t()
-  def client(repo), do: Ecto.Adapter.lookup_meta(repo).client
+  def client(repo), do: meta(repo).client
 
   @doc "The namespace `schema` reads and writes, under an optional Ecto prefix."
   @spec namespace(module(), String.t() | nil) :: String.t()
   def namespace(schema, prefix \\ nil) do
     TP.Namespace.name!(schema.__schema__(:source), prefix || schema.__schema__(:prefix))
+  end
+
+  @doc """
+  turbopuffer's metadata for a schema's namespace (`docs/turbopuffer/metadata.md`), like its `"schema"`,
+  `"approx_row_count"`, `"index"` status, and `"read_only"`, `"sharding"`, `"pinning"` and `"branching"` when set.
+  """
+  @spec metadata(Ecto.Repo.t(), module(), keyword()) :: map()
+  def metadata(repo, schema, opts \\ []) do
+    namespace_request!(repo, schema, opts, :metadata, :get, "/v1/namespaces/:namespace/metadata", nil)
+  end
+
+  @doc """
+  Changes a namespace's metadata and returns the result: `read_only: true` rejects writes until it's `false` again,
+  and `pinning: [replicas: n]` reserves compute for the namespace until `pinning: nil`. Pinning is billed by the
+  hour; see `docs/turbopuffer/pinning.md`.
+  """
+  @spec update_metadata(Ecto.Repo.t(), module(), keyword(), keyword()) :: map()
+  def update_metadata(repo, schema, changes, opts \\ []) do
+    body =
+      changes
+      |> Keyword.validate!([:read_only, :pinning])
+      |> Map.new(fn
+        {:read_only, read_only} when is_boolean(read_only) -> {"read_only", read_only}
+        {:pinning, nil} -> {"pinning", nil}
+        {:pinning, pinning} when is_list(pinning) -> {"pinning", Map.new(Keyword.validate!(pinning, [:replicas]))}
+        {key, value} -> raise ArgumentError, "invalid #{inspect(key)}: #{inspect(value)}"
+      end)
+
+    namespace_request!(repo, schema, opts, :update_metadata, :patch, "/v1/namespaces/:namespace/metadata", body)
+  end
+
+  @doc """
+  Tells turbopuffer queries to a schema's namespace are coming, so it can warm its cache
+  (`docs/turbopuffer/warm-cache.md`).
+  """
+  @spec warm_cache(Ecto.Repo.t(), module(), keyword()) :: :ok
+  def warm_cache(repo, schema, opts \\ []) do
+    namespace_request!(repo, schema, opts, :warm_cache, :get, "/v1/namespaces/:namespace/hint_cache_warm", nil)
+    :ok
+  end
+
+  @doc "Deletes a schema's namespace and all of its documents. There's no undoing it."
+  @spec delete_namespace(Ecto.Repo.t(), module(), keyword()) :: :ok
+  def delete_namespace(repo, schema, opts \\ []) do
+    namespace_request!(repo, schema, opts, :delete_namespace, :delete, "/v2/namespaces/:namespace", nil)
+    :ok
+  end
+
+  @doc """
+  Declares a schema's turbopuffer schema on its existing namespace without writing documents, e.g. after adding
+  `full_text_search:` or `embed:` to a field. Indexes build in the background, and queries needing one get a 409
+  until it's ready. See `docs/turbopuffer/write.md#updating-attributes`.
+  """
+  @spec update_schema(Ecto.Repo.t(), module(), keyword()) :: :ok
+  def update_schema(repo, schema, opts \\ []) do
+    body = schema |> TP.Namespace.new() |> TP.Namespace.write_params()
+    namespace_request!(repo, schema, opts, :update_schema, :post, "/v2/namespaces/:namespace", body)
+    :ok
+  end
+
+  @doc """
+  Makes a schema's namespace an instant copy-on-write branch of the namespace named `from`, which is left as it
+  is. The namespace must be empty. See `docs/turbopuffer/branching.md`.
+
+      Ecto.Adapters.Turbopuffer.branch(Repo, CardStack, from: Ecto.Adapters.Turbopuffer.namespace(CardStack, "prod"),
+        prefix: "dev")
+  """
+  @spec branch(Ecto.Repo.t(), module(), keyword()) :: :ok
+  def branch(repo, schema, opts) do
+    {from, opts} = Keyword.pop!(opts, :from)
+    body = %{"branch_from_namespace" => from}
+    namespace_request!(repo, schema, opts, :branch, :post, "/v2/namespaces/:namespace", body)
+    :ok
+  end
+
+  @doc """
+  Copies every document of the namespace named `from` into a schema's empty namespace, server side. Pass
+  `:from_region` and `:from_api_key` to copy from another region or organization. The copy keeps the source's
+  sharding unless the schema sets `num_shards`. See `docs/turbopuffer/write.md#param-copy_from_namespace`.
+  """
+  @spec copy(Ecto.Repo.t(), module(), keyword()) :: :ok
+  def copy(repo, schema, opts) do
+    {from, opts} = Keyword.pop!(opts, :from)
+    {source, opts} = Keyword.split(opts, [:from_region, :from_api_key])
+
+    from =
+      if source == [] do
+        from
+      else
+        %{"source_namespace" => from}
+        |> put("source_region", source[:from_region])
+        |> put("source_api_key", source[:from_api_key])
+      end
+
+    body =
+      %{"copy_from_namespace" => from}
+      |> put("sharding", Map.get(TP.Namespace.write_params(TP.Namespace.new(schema)), "sharding"))
+
+    namespace_request!(repo, schema, opts, :copy, :post, "/v2/namespaces/:namespace", body)
+    :ok
+  end
+
+  @doc """
+  The names of the namespaces starting with `:prefix`, which is turbopuffer's name prefix rather than an Ecto prefix.
+  """
+  @spec list_namespaces(Ecto.Repo.t(), keyword()) :: [String.t()]
+  def list_namespaces(repo, opts \\ []) do
+    opts = Keyword.validate!(opts, [:prefix, :page_size])
+    meta = meta(repo)
+
+    Stream.unfold(:first, fn
+      nil ->
+        nil
+
+      cursor ->
+        query =
+          %{"prefix" => opts[:prefix], "page_size" => opts[:page_size], "cursor" => if(cursor != :first, do: cursor)}
+          |> Enum.reject(fn {_key, value} -> is_nil(value) end)
+          |> URI.encode_query()
+
+        path = "/v1/namespaces" <> if(query == "", do: "", else: "?" <> query)
+        page = request!(meta, :get, path, nil, [], :list_namespaces, nil)
+        {Enum.map(page["namespaces"], & &1["id"]), page["next_cursor"]}
+    end)
+    |> Enum.concat()
+  end
+
+  @doc """
+  Measures the recall of a namespace's vector index (`docs/turbopuffer/recall.md`), returning `"avg_recall"`,
+  `"avg_ann_count"` and `"avg_exhaustive_count"`. Given a schema, turbopuffer searches for `:num` random documents'
+  vectors (25 by default). Given a query, it measures the query's own vector search, filters, and limit.
+
+      Ecto.Adapters.Turbopuffer.recall(Repo, from(c in CardStack,
+        where: c.planbook_id == ^id, order_by: ann(c.vector, ^vector), limit: 10))
+  """
+  @spec recall(Ecto.Repo.t(), Ecto.Queryable.t(), keyword()) :: map()
+  def recall(repo, queryable, opts \\ []) do
+    query = Ecto.Queryable.to_query(queryable)
+    query = if prefix = prefix(repo, opts), do: Ecto.Query.put_query_prefix(query, prefix), else: query
+    {query, _cast, params} = Ecto.Adapter.Queryable.plan_query(:all, __MODULE__, query)
+    {source, _schema, prefix} = elem(query.sources, 0)
+    namespace = TP.Namespace.name!(source, prefix)
+
+    request!(
+      meta(repo),
+      :post,
+      "/v1/namespaces/#{namespace}/_debug/recall",
+      Plan.recall(query, params, opts),
+      opts,
+      :recall,
+      namespace
+    )
   end
 
   # ------------------------------------------------------------------------------------------------
@@ -135,7 +287,7 @@ defmodule Ecto.Adapters.Turbopuffer do
   @impl Ecto.Adapter.Schema
   def insert(meta, schema_meta, fields, on_conflict, returning, opts) do
     no_returning!(returning)
-    [plan] = Plan.upserts(schema_meta, [fields], on_conflict, nil)
+    [plan] = Plan.upserts(schema_meta, [fields], on_conflict, Keyword.delete(opts, :batch_size))
 
     case write!(meta, plan, opts) do
       %{"rows_affected" => 1} -> {:ok, []}
@@ -148,7 +300,7 @@ defmodule Ecto.Adapters.Turbopuffer do
   def insert_all(meta, schema_meta, _header, rows, on_conflict, returning, placeholders, opts) do
     no_returning!(returning)
     rows = Enum.map(rows, fn fields -> Enum.map(fields, &resolve_placeholder(&1, placeholders)) end)
-    plans = Plan.upserts(schema_meta, rows, on_conflict, opts[:batch_size])
+    plans = Plan.upserts(schema_meta, rows, on_conflict, opts)
     responses = Enum.map(plans, &write!(meta, &1, opts))
     count = responses |> Enum.map(& &1["rows_affected"]) |> Enum.sum()
 
@@ -259,28 +411,57 @@ defmodule Ecto.Adapters.Turbopuffer do
     raise ArgumentError, "turbopuffer writes can't return fields, got: #{inspect(fields)}"
   end
 
-  defp request(%{client: client, telemetry: {repo, event}} = meta, plan, opts) do
-    {kind, path} =
-      case plan.kind do
-        :write -> {:write, "/v2/namespaces/#{plan.namespace}"}
-        _query -> {:query, "/v2/namespaces/#{plan.namespace}/query"}
-      end
+  defp request(meta, plan, opts) do
+    case plan.kind do
+      :write -> request(meta, :post, "/v2/namespaces/#{plan.namespace}", plan.body, opts, :write, plan.namespace)
+      _query -> request(meta, :post, "/v2/namespaces/#{plan.namespace}/query", plan.body, opts, :query, plan.namespace)
+    end
+  end
 
+  defp request(%{client: client, telemetry: {repo, event}} = meta, method, path, body, opts, kind, namespace) do
     start = System.monotonic_time()
-    result = client |> Turbopuffer.Client.post(path, plan.body, meta.request_opts) |> result()
+    result = client |> Turbopuffer.Client.request(method, path, body, meta.request_opts) |> result()
 
     :telemetry.execute(event, %{total_time: System.monotonic_time() - start}, %{
       type: :ecto_turbopuffer_query,
       repo: repo,
       kind: kind,
-      source: plan.namespace,
-      query: plan.body,
+      source: namespace,
+      query: body,
       result: result,
       options: Keyword.get(opts, :telemetry_options, [])
     })
 
     result
   end
+
+  defp request!(meta, method, path, body, opts, kind, namespace) do
+    case request(meta, method, path, body, opts, kind, namespace) do
+      {:ok, response} -> response
+      {:error, error} -> raise error
+    end
+  end
+
+  defp namespace_request!(repo, schema, opts, kind, method, path, body) do
+    opts = Keyword.validate!(opts, [:prefix, :telemetry_options])
+    namespace = namespace(schema, prefix(repo, opts))
+    request!(meta(repo), method, String.replace(path, ":namespace", namespace), body, opts, kind, namespace)
+  end
+
+  # Repo operations apply the repo's default_options/1, so these do too, as a query would.
+  defp prefix(repo, opts) do
+    Keyword.get_lazy(opts, :prefix, fn ->
+      if is_atom(repo) and function_exported?(repo, :default_options, 1), do: repo.default_options(:all)[:prefix]
+    end)
+  end
+
+  defp meta(repo) do
+    repo = if is_atom(repo) and function_exported?(repo, :get_dynamic_repo, 0), do: repo.get_dynamic_repo(), else: repo
+    Ecto.Adapter.lookup_meta(repo)
+  end
+
+  defp put(map, _key, nil), do: map
+  defp put(map, key, value), do: Map.put(map, key, value)
 
   defp result({:ok, body}), do: {:ok, body}
 

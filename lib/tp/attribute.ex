@@ -75,7 +75,7 @@ defmodule TP.Attribute do
   What a query can do with an attribute: filter it (`:filter`), match it with a pattern or text index (`:glob`,
   `:regex`, `:fuzzy`, `:full_text_search`), rank it by vector (`:ann` with an index, `:vector` exactly), by
   `embed(text)` (`:embed`, or `:embed_model` when the query names the model), or by sparse vector
-  (`:sparse_knn`), or patch it in place (`:patch`).
+  (`:sparse_knn`), score its value (`:rank`), or patch it in place (`:patch`).
   """
   @type capability ::
           :filter
@@ -88,6 +88,7 @@ defmodule TP.Attribute do
           | :embed
           | :embed_model
           | :sparse_knn
+          | :rank
           | :patch
 
   @typedoc """
@@ -372,6 +373,7 @@ defmodule TP.Attribute do
       # A vector attribute can be ranked by embedded text when the query names the model.
       embed_model: embed != nil or kind(type) == :vector,
       sparse_knn: kind(type) == :sparse_vector,
+      rank: (primary_key or filterable) and type in [:int, :uint, :float, :datetime],
       patch: not (primary_key or TP.Types.vector?(type) or embed != nil)
     ]
     |> Enum.filter(fn {_capability, able} -> able end)
@@ -405,6 +407,10 @@ defmodule TP.Attribute do
 
   defp requirement(attribute, :embed_model), do: "#{inspect(attribute.field)} isn't embedded text or a vector"
   defp requirement(attribute, :sparse_knn), do: "#{inspect(attribute.field)} isn't a sparse vector"
+
+  defp requirement(attribute, :rank),
+    do: "#{inspect(attribute.field)} isn't a filterable int, uint, float, or datetime, so it can't be scored"
+
   defp requirement(attribute, index), do: "#{inspect(attribute.field)} needs `#{index}:`"
 
   defp config!(option, config, validate) do

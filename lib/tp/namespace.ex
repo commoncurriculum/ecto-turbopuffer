@@ -20,11 +20,11 @@ defmodule TP.Namespace do
   @max_sparse_dims 1_024
 
   @enforce_keys [:module, :attributes, :by_name, :schema, :distance_metric]
-  defstruct [:module, :attributes, :by_name, :schema, :distance_metric, embeds?: false]
+  defstruct [:module, :attributes, :by_name, :schema, :distance_metric, :num_shards, embeds?: false]
 
   @typedoc """
-  `schema` and `distance_metric` are what writes that store values declare. `by_name` keys the attributes by
-  turbopuffer name, which is the field's source.
+  `schema`, `distance_metric` and `num_shards` are what writes that store values declare. `by_name` keys the
+  attributes by turbopuffer name, which is the field's source.
   """
   @type t :: %__MODULE__{
           module: module(),
@@ -32,6 +32,7 @@ defmodule TP.Namespace do
           by_name: %{String.t() => TP.Attribute.t()},
           schema: %{String.t() => map() | String.t()},
           distance_metric: String.t() | nil,
+          num_shards: pos_integer() | nil,
           embeds?: boolean()
         }
 
@@ -48,6 +49,7 @@ defmodule TP.Namespace do
       by_name: Map.new(attributes, &{&1.name, &1}),
       schema: Map.new(Enum.flat_map(attributes, &schema_entry/1)),
       distance_metric: module.__tp__(:distance_metric),
+      num_shards: module.__tp__(:num_shards),
       embeds?: Enum.any?(attributes, & &1.embed)
     }
   end
@@ -108,11 +110,18 @@ defmodule TP.Namespace do
   end
 
   @doc """
-  The `schema` and `distance_metric` of a write that stores values, so the write creates or extends the namespace.
+  The `schema`, `distance_metric` and `sharding` of a write that stores values, so the write creates or extends the
+  namespace.
   """
   @spec write_params(t()) :: map()
-  def write_params(%__MODULE__{schema: schema, distance_metric: nil}), do: %{"schema" => schema}
-  def write_params(%__MODULE__{} = ns), do: %{"schema" => ns.schema, "distance_metric" => ns.distance_metric}
+  def write_params(%__MODULE__{} = ns) do
+    %{"schema" => ns.schema}
+    |> put("distance_metric", ns.distance_metric)
+    |> put("sharding", ns.num_shards && %{"num_shards" => ns.num_shards})
+  end
+
+  defp put(map, _key, nil), do: map
+  defp put(map, key, value), do: Map.put(map, key, value)
 
   @doc """
   A document to upsert, from the values Ecto dumped, keyed by field source. Raises when the id or a vector is

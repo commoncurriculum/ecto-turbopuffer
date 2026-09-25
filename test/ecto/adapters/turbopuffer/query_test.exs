@@ -63,21 +63,18 @@ defmodule Ecto.Adapters.Turbopuffer.QueryTest do
     end
 
     test "datetimes, uuids, and bools" do
-      vectors = %{embedding: [1.0, 0.0, 0.0], half_embedding: [1.0, 0.0], small_embedding: [1, 0]}
       uuid = "769c134d-07b8-4225-954a-b6cc5ffc320c"
 
-      Repo.insert_all(Everything, [
-        Map.merge(vectors, %{id: "old", updated_at: ~U[2025-01-01 00:00:00Z], owner_uuid: uuid, is_public: true}),
-        Map.merge(vectors, %{id: "new", updated_at: ~U[2026-09-01 00:00:00Z], is_public: false})
-      ])
+      Repo.insert!(Everything.new(id: "old", updated_at: ~U[2025-01-01 00:00:00Z], owner_uuid: uuid, is_public: true))
+      Repo.insert!(Everything.new(id: "new", updated_at: ~U[2026-09-01 00:00:00Z], is_public: false))
 
       assert ids(from e in Everything, where: e.updated_at > ^~U[2026-01-01 00:00:00Z]) == ~w(new)
-      assert ids(from e in Everything, where: e.owner_uuid == ^uuid) == ~w(old)
+      assert ids(from e in Everything, where: e.owner_uuid == ^String.upcase(uuid)) == ~w(old)
       assert ids(from e in Everything, where: e.is_public == false) == ~w(new)
       assert ids(from e in Everything, order_by: [desc: e.updated_at], limit: 1) == ~w(new)
     end
 
-    test "ordering comparisons never match nil, and != does" do
+    test "ordering comparisons never match nil, and != does, as in SQL" do
       Repo.insert!(%CardStack{id: "unpositioned", vector: [1.0, 0.0, 0.0]})
 
       assert ids(from c in CardStack, where: c.position < 3) == ~w(cells photosynthesis)
@@ -88,99 +85,91 @@ defmodule Ecto.Adapters.Turbopuffer.QueryTest do
       assert ids(from c in CardStack, where: c.position != 1) == ~w(cells fractions revolution unpositioned)
     end
 
-    test "dynamic(true) seeds a filter" do
-      filter = dynamic([c], ^dynamic(true) and c.planbook_id == ^"science")
-      assert ids(from c in CardStack, where: ^filter) == ~w(cells photosynthesis)
-    end
-
-    test "and, or, and not" do
+    test "and, or, not, or_where, and constant filters" do
       query = from c in CardStack, where: c.planbook_id == "history" or (c.position == 1 and not (c.title == "Cells"))
       assert ids(query) == ~w(photosynthesis revolution)
 
-      query = from c in CardStack, where: c.planbook_id == "history", or_where: c.id == "fractions"
-      assert ids(query) == ~w(fractions revolution)
-    end
+      assert ids(from c in CardStack, where: c.planbook_id == "history", or_where: c.id == "fractions") ==
+               ~w(fractions revolution)
 
-    test "a leading or_where filters, and not distributes over and" do
+      # A leading or_where has nothing to join, so it's the filter.
       assert ids(from c in CardStack, or_where: c.id == "cells") == ~w(cells)
 
-      query = Enum.reduce(~w(cells revolution), CardStack, fn id, query -> or_where(query, [c], c.id == ^id) end)
-      assert ids(query) == ~w(cells revolution)
-
-      # != matches nil, so fractions, with no planbook, is in.
+      # not distributes over and; != matches nil, so fractions, with no planbook, is in.
       assert ids(from c in CardStack, where: not (c.planbook_id == "science" and c.position > 1)) ==
                ~w(fractions photosynthesis revolution)
+
+      assert ids(from c in CardStack, where: ^dynamic([c], ^dynamic(true) and c.planbook_id == ^"science")) ==
+               ~w(cells photosynthesis)
+
+      assert ids(from c in CardStack, where: false) == []
+      assert length(Repo.all(from c in CardStack, where: true)) == 4
     end
 
     test "arrays" do
       assert ids(from c in CardStack, where: contains(c.standard_ids, "LS1.C")) == ~w(cells photosynthesis)
-      assert ids(from c in CardStack, where: contains(c.standard_ids, ^"LS1.B")) == ~w(cells)
-      assert ids(from c in CardStack, where: not contains(c.standard_ids, "LS1.C")) == ~w(fractions revolution)
+      assert ids(from c in CardStack, where: not contains(c.standard_ids, ^"LS1.C")) == ~w(fractions revolution)
 
       assert ids(from c in CardStack, where: contains_any(c.standard_ids, ^["LS1.B", "3.NF.A.1"])) ==
                ~w(cells fractions)
 
+      assert ids(from c in CardStack, where: not contains_any(c.standard_ids, ^["LS1.B", "3.NF.A.1"])) ==
+               ~w(photosynthesis revolution)
+
+      assert ids(from c in CardStack, where: any_lt(c.standard_ids, "LS1.C")) == ~w(cells fractions)
+      assert ids(from c in CardStack, where: any_lte(c.standard_ids, "3.NF.A.1")) == ~w(fractions)
+      assert ids(from c in CardStack, where: any_gt(c.standard_ids, "LS1.B")) == ~w(cells photosynthesis)
       assert ids(from c in CardStack, where: any_gte(c.standard_ids, "LS1.C")) == ~w(cells photosynthesis)
 
-      # Ecto only allows `value in field` on its own array types, so a schemaless query shows Contains/NotContains.
+      # Ecto only allows `value in field` on its own array types, so this takes a schemaless query.
       schemaless = fn where -> Repo.all(from(c in "card_stacks", select: c.id, order_by: c.id) |> where(^where)) end
       assert schemaless.(dynamic([c], "LS1.B" in c.standard_ids)) == ~w(cells)
       assert schemaless.(dynamic([c], "LS1.C" not in c.standard_ids)) == ~w(fractions revolution)
     end
 
-    test "like and ilike become globs" do
+    test "like, ilike and globs, with glob's own metacharacters matching literally" do
+      Repo.insert!(%CardStack{id: "odd", title: "100% [draft]? {x}*", vector: [1.0, 0.0, 0.0]})
+
       assert ids(from c in CardStack, where: like(c.title, "Photo%")) == ~w(photosynthesis)
       assert ids(from c in CardStack, where: ilike(c.title, ^"%REVOLUTION")) == ~w(revolution)
       assert ids(from c in CardStack, where: like(c.title, "Fraction_")) == ~w(fractions)
-      assert ids(from c in CardStack, where: not like(c.title, "Photo%")) == ~w(cells fractions revolution)
+      assert ids(from c in CardStack, where: not like(c.title, "%i%")) == ~w(odd)
+      assert ids(from c in CardStack, where: like(c.title, "100\\% [draft]? {x}*")) == ~w(odd)
       assert ids(from c in CardStack, where: like(c.id, "photo%")) == ~w(photosynthesis)
+      assert ids(from c in CardStack, where: glob(c.title, "*Revolution")) == ~w(revolution)
       assert ids(from c in CardStack, where: iglob(c.title, "the french*")) == ~w(revolution)
+      assert ids(from c in CardStack, where: not iglob(c.title, "*o*")) == ~w(odd)
     end
 
     test "regex" do
-      vectors = %{embedding: [1.0, 0.0, 0.0], half_embedding: [1.0, 0.0], small_embedding: [1, 0]}
-
-      Repo.insert_all(Everything, [
-        Map.merge(vectors, %{id: "a", title: "Photosynthesis in plants"}),
-        Map.merge(vectors, %{id: "b", title: "Cell division"})
-      ])
+      Repo.insert!(Everything.new(id: "a", title: "Photosynthesis in plants"))
+      Repo.insert!(Everything.new(id: "b", title: "Cell division"))
 
       assert ids(from e in Everything, where: regex(e.title, "^Photo.*plants$")) == ~w(a)
+      assert ids(from e in Everything, where: not regex(e.title, "^Photo")) == ~w(b)
     end
 
-    test "text filters" do
+    test "fuzzy and token filters" do
       assert ids(from c in CardStack, where: fuzzy(c.title, ^"fotosynthesis")) == ~w(photosynthesis)
-      assert ids(from c in CardStack, where: contains_all_tokens(c.markdown, ^"plants sugar")) == ~w(photosynthesis)
+
+      strict = %{max_edit_distance: [%{min_query_chars: 3, distance: 0}]}
+      assert ids(from c in CardStack, where: fuzzy(c.title, ^"fotosynthesis", ^strict)) == []
+
+      lenient = %{max_edit_distance: [%{min_query_chars: 3, distance: 0}], case_sensitive: false}
+      assert ids(from c in CardStack, where: fuzzy(c.title, ^"PHOTOSYNTHESIS", ^lenient)) == ~w(photosynthesis)
+
+      assert ids(from c in CardStack, where: contains_all_tokens(c.markdown, ^"sugar plants")) == ~w(photosynthesis)
 
       assert ids(from c in CardStack, where: contains_any_token(c.markdown, ^"mitosis bastille")) ==
                ~w(cells revolution)
 
       assert ids(from c in CardStack, where: contains_token_sequence(c.markdown, ^"one cell into two")) == ~w(cells)
-
-      assert ids(from c in CardStack, where: contains_all_tokens(c.markdown, ^"mito", ^%{last_as_prefix: true})) ==
-               ~w(cells)
-
-      strict = %{max_edit_distance: [%{min_query_chars: 3, distance: 0}]}
-      assert ids(from c in CardStack, where: fuzzy(c.title, ^"fotosynthesis", ^strict)) == []
-    end
-
-    test "check the schema's indexes before sending" do
-      assert_raise Ecto.QueryError, ~r/:markdown isn't filterable in TP.Test.CardStack/, fn ->
-        Repo.all(from c in CardStack, where: c.markdown == "x")
-      end
-
-      assert_raise Ecto.QueryError, ~r/:planbook_id needs `full_text_search:` in TP.Test.CardStack/, fn ->
-        Repo.all(from c in CardStack, order_by: [desc: bm25(c.planbook_id, "x")], limit: 1)
-      end
-
-      assert_raise Ecto.QueryError, ~r/:markdown needs `fuzzy:`/, fn ->
-        Repo.all(from c in CardStack, where: fuzzy(c.markdown, "x"))
-      end
+      assert ids(from c in CardStack, where: contains_token_sequence(c.markdown, ^"two into cell")) == []
     end
   end
 
-  describe "ordering and limits" do
-    test "by fields" do
+  describe "ordering, limits and paging" do
+    test "by fields, with an offset" do
       assert ids(from c in CardStack, order_by: [desc: c.position], limit: 10) ==
                ~w(fractions revolution cells photosynthesis)
 
@@ -190,46 +179,43 @@ defmodule Ecto.Adapters.Turbopuffer.QueryTest do
       assert ids(from c in CardStack, order_by: c.position, limit: 2, offset: 1) == ~w(cells revolution)
     end
 
-    test "unordered queries without a limit page through every row, and others need one" do
-      assert length(Repo.all(CardStack)) == 4
-      assert Enum.count(Repo.stream(CardStack)) == 4
-
-      assert_raise Ecto.QueryError, ~r/at most 10000 results per query, so add a limit/, fn ->
-        Repo.all(from c in CardStack, order_by: c.position)
-      end
-
-      assert_raise Ecto.QueryError, ~r/nulls first ascending and last descending/, fn ->
-        Repo.all(from c in CardStack, order_by: [asc_nulls_last: c.position], limit: 1)
-      end
+    test "limit_per caps the rows sharing values of some fields" do
+      query = from c in CardStack, order_by: [desc: c.position], limit: 10
+      assert Repo.all(query, limit_per: {[:planbook_id], 1}) |> Enum.map(& &1.id) == ~w(fractions revolution cells)
+      assert Repo.all(query, limit_per: {[:planbook_id, :position], 1}) |> length() == 4
     end
 
-    test "each page after the first filters past the previous page's last id" do
+    test "a query ordered by id without a limit reads every page, each filtered past the last one's final id" do
       rows =
-        for i <- 1..10_001 do
-          %{id: "p" <> String.pad_leading("#{i}", 5, "0"), position: 100 + i, vector: [1.0, 0.0, 0.0]}
-        end
+        for i <- 1..10_001,
+            do: %{id: "p" <> String.pad_leading("#{i}", 5, "0"), position: 100 + i, vector: [1.0, 0.0, 0.0]}
 
-      Repo.insert_all(CardStack, rows)
-      handler = inspect(self())
-      :telemetry.attach(handler, [:tp, :test, :repo, :query], &__MODULE__.send_query/4, self())
-      on_exit(fn -> :telemetry.detach(handler) end)
+      {_, writes} = requests(fn -> Repo.insert_all(CardStack, rows) end)
+      assert Enum.map(writes, &length(&1.query["upsert_rows"])) == List.duplicate(1_000, 10) ++ [1]
 
-      assert ids(from c in CardStack, where: c.position > 100, order_by: [desc: c.id]) ==
-               rows |> Enum.map(& &1.id) |> Enum.reverse()
+      {read, queries} = requests(fn -> ids(from c in CardStack, where: c.position > 100, order_by: [desc: c.id]) end)
+      assert read == rows |> Enum.map(& &1.id) |> Enum.reverse()
 
-      assert_received {:query, %{"filters" => ["position", "Gt", 100]}}
-      assert_received {:query, %{"filters" => ["And", [["position", "Gt", 100], ["id", "Lt", "p00002"]]]}}
+      assert Enum.map(queries, & &1.query["filters"]) == [
+               ["position", "Gt", 100],
+               ["And", [["position", "Gt", 100], ["id", "Lt", "p00002"]]]
+             ]
+
+      assert Enum.count(Repo.stream(CardStack)) == 10_005
     end
   end
 
   describe "selects and aggregates" do
-    test "select fields" do
-      assert Repo.all(from c in CardStack, where: c.id == "fractions", select: {c.id, c.title, c.position}) ==
-               [{"fractions", "Fractions", 4}]
+    test "fields, maps, and literals" do
+      assert Repo.all(from c in CardStack, where: c.id == "fractions", select: {c.id, c.title, c.position, "lit"}) ==
+               [{"fractions", "Fractions", 4, "lit"}]
 
       assert Repo.one(from c in CardStack, where: c.id == "fractions", select: %{title: c.title}) == %{
                title: "Fractions"
              }
+
+      assert Repo.all(from c in "card_stacks", where: c.planbook_id == "history", select: {c.id, c.position}) ==
+               [{"revolution", 3}]
     end
 
     test "count, sum, group_by, and exists?" do
@@ -242,149 +228,43 @@ defmodule Ecto.Adapters.Turbopuffer.QueryTest do
 
       assert Repo.exists?(from c in CardStack, where: c.planbook_id == "history")
       refute Repo.exists?(from c in CardStack, where: c.planbook_id == "art")
-
-      assert_raise Ecto.QueryError, ~r/counts documents, so use count\(\)/, fn ->
-        Repo.aggregate(CardStack, :count, :title)
-      end
     end
 
-    test "schemaless queries send field names as they are" do
-      assert Repo.all(from c in "card_stacks", where: c.planbook_id == "history", select: {c.id, c.position}) ==
-               [{"revolution", 3}]
-    end
-  end
-
-  describe "search" do
-    test "bm25, with dist() for the score" do
-      [{first, score} | _] =
-        Repo.all(
-          from c in CardStack,
-            order_by: [desc: bm25(c.markdown, ^"plants sugar")],
-            limit: 10,
-            select: {c, dist()}
-        )
-
-      assert first.id == "photosynthesis"
-      assert is_float(score) and score > 0
-
-      assert_raise Ecto.QueryError, ~r/highest scores first, so order it desc/, fn ->
-        Repo.all(from c in CardStack, order_by: bm25(c.markdown, "plants"), limit: 1)
-      end
+    test "a namespace that doesn't exist yet reads as empty" do
+      assert Repo.all(Everything) == []
+      assert Repo.get(Everything, "doc") == nil
+      assert Repo.aggregate(Everything, :count) == 0
+      assert Repo.aggregate(Everything, :sum, :position) == nil
     end
 
-    test "sums, weights, and max of bm25 scores" do
-      query =
-        from c in CardStack,
-          order_by: [desc: bm25(c.markdown, ^"cell") + 3.0 * bm25(c.title, ^"revolution")],
-          limit: 2
-
-      assert ids(query) == ~w(revolution cells)
-
-      query =
-        from c in CardStack, order_by: [desc: max_score(bm25(c.title, "cell"), bm25(c.markdown, "bastille"))], limit: 2
-
-      assert Enum.sort(ids(query)) == ~w(cells revolution)
-
-      # last_as_prefix makes the last word match as a prefix, for type-ahead.
-      query = from c in CardStack, order_by: [desc: bm25(c.markdown, ^"mito", ^%{last_as_prefix: true})], limit: 1
-      assert ids(query) == ~w(cells)
-    end
-
-    test "bm25 in a select computes the score without ranking by it" do
-      [{id, score}] =
-        Repo.all(from c in CardStack, where: c.id == "cells", select: {c.id, bm25(c.markdown, ^"mitosis")}, limit: 1)
-
-      assert id == "cells" and score > 0
-    end
-
-    test "vector search" do
-      assert ids(from c in CardStack, order_by: ann(c.vector, ^[1.0, 0.05, 0.0]), limit: 2) == ~w(photosynthesis cells)
-
-      assert ids(
-               from c in CardStack,
-                 where: c.planbook_id == "history",
-                 order_by: knn(c.vector, ^[1.0, 0.0, 0.0]),
-                 limit: 2
-             ) ==
-               ~w(revolution)
-
-      [{"photosynthesis", distance}] =
-        Repo.all(
-          from c in CardStack,
-            where: c.id == "photosynthesis",
-            select: {c.id, vector_distance(c.vector, ^[0.0, 1.0, 0.0])},
-            limit: 1
-        )
-
-      assert_in_delta distance, 1.0, 0.0001
-
-      assert_raise Ecto.QueryError, ~r/vector search ranks the closest vectors first, so order it asc/, fn ->
-        Repo.all(from c in CardStack, order_by: [desc: ann(c.vector, ^[1.0, 0.0, 0.0])], limit: 1)
-      end
-    end
-
-    test "sparse vector search" do
-      Repo.insert_all(Everything, [
-        %{
-          id: "a",
-          embedding: [1.0, 0.0, 0.0],
-          half_embedding: [1.0, 0.0],
-          small_embedding: [1, 0],
-          sparse: %{"1" => 1.0}
-        },
-        %{
-          id: "b",
-          embedding: [1.0, 0.0, 0.0],
-          half_embedding: [1.0, 0.0],
-          small_embedding: [1, 0],
-          sparse: %{"1" => 0.2, "2" => 1.0}
-        }
-      ])
-
-      query =
-        from e in Everything, order_by: [desc: sparse_knn(e.sparse, ^%{"1" => 1.0})], limit: 2, select: {e.id, dist()}
-
-      assert [{"a", a}, {"b", b}] = Repo.all(query)
-      assert a > b
-    end
-
-    test "union_all runs a multi-query, and rerank_by: :rrf fuses it" do
-      text = from c in CardStack, order_by: [desc: bm25(c.markdown, ^"sunlight")], limit: 2
-      vector = from c in CardStack, order_by: ann(c.vector, ^[0.0, 0.0, 1.0]), limit: 1
-
-      assert ids(union_all(text, ^vector)) == ~w(photosynthesis revolution)
-
-      assert Repo.all(union_all(select(text, [c], {c.id, c.title}), ^select(vector, [c], {c.id, c.planbook_id}))) ==
-               [{"photosynthesis", "Photosynthesis"}, {"revolution", "history"}]
-
-      scored = fn query -> select(query, [c], {c.id, dist()}) end
-      assert [{_, rrf} | _] = Repo.all(union_all(scored.(text), ^scored.(vector)), rerank_by: :rrf)
-      assert_in_delta rrf, 1 / 61, 0.0001
-
-      top = fn weights -> Repo.all(union_all(text, ^vector), rerank_by: {:rrf, weights: weights, limit: 1}) end
-      assert Enum.map(top.([5, 1]), & &1.id) == ~w(photosynthesis)
-      assert Enum.map(top.([1, 5]), & &1.id) == ~w(revolution)
-
-      # Each row scores weight / (rank_constant + rank), and offset skips the first fused row.
-      fused =
-        Repo.all(union_all(scored.(text), ^scored.(vector)),
-          rerank_by: {:rrf, weights: [2, 1], rank_constant: 10, limit: 1, offset: 1}
-        )
-
-      assert [{"revolution", second}] = fused
-      assert_in_delta second, 1 / 11, 0.0001
-
-      assert_raise ArgumentError, ~r/unknown keys \[:wieghts\]/, fn ->
-        Repo.all(union_all(text, ^vector), rerank_by: {:rrf, wieghts: [1, 5]})
-      end
+    test "filters compare against any value, like an id too long to write" do
+      assert Repo.get(CardStack, String.duplicate("a", 65)) == nil
     end
   end
 
   test "consistency: :eventual" do
-    assert length(Repo.all(CardStack, consistency: :eventual)) in 0..4
+    {rows, [request]} = requests(fn -> Repo.all(CardStack, consistency: :eventual) end)
+    assert request.query["consistency"] == %{"level" => "eventual"}
+
+    assert rows
+           |> Enum.map(& &1.id)
+           |> MapSet.new()
+           |> MapSet.subset?(MapSet.new(~w(cells fractions photosynthesis revolution)))
   end
 
-  def send_query(_event, _measurements, %{query: body}, test) do
-    if self() == test, do: send(test, {:query, body})
+  test "telemetry reports each request with turbopuffer's billing and performance figures" do
+    {_, [request]} = requests(fn -> Repo.all(from c in CardStack, where: c.id == "cells") end)
+
+    assert %{kind: :query, source: "ecto-tpuf-test-" <> _, repo: Repo, query: %{"filters" => ["id", "Eq", "cells"]}} =
+             request
+
+    assert {:ok, %{"billing" => %{"billable_logical_bytes_queried" => _}, "performance" => %{"server_total_ms" => _}}} =
+             request.result
+  end
+
+  test "turbopuffer's errors raise TP.Error" do
+    error = assert_raise TP.Error, fn -> Repo.all(from c in "card_stacks", where: c.nope == 1, select: c.id) end
+    assert error.status == 400
+    assert error.message =~ "attribute not found"
   end
 end

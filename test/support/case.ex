@@ -13,6 +13,8 @@ defmodule TP.Test.Case do
 
       import Ecto.Query
       import TP.Query
+      import TP.Test.Case, only: [requests: 1]
+      alias Ecto.Adapters.Turbopuffer
       alias TP.Test.Repo
     end
   end
@@ -31,5 +33,29 @@ defmodule TP.Test.Case do
     end)
 
     {:ok, prefix: prefix}
+  end
+
+  @doc "Runs `fun`, returning its result and the requests it sent, as their telemetry metadata."
+  def requests(fun) do
+    handler = {__MODULE__, make_ref()}
+    :telemetry.attach(handler, [:tp, :test, :repo, :query], &__MODULE__.forward/4, self())
+
+    try do
+      result = fun.()
+      {result, collect([])}
+    after
+      :telemetry.detach(handler)
+    end
+  end
+
+  @doc false
+  def forward(_event, _measurements, metadata, test), do: if(self() == test, do: send(test, {:tp_request, metadata}))
+
+  defp collect(acc) do
+    receive do
+      {:tp_request, metadata} -> collect([metadata | acc])
+    after
+      0 -> Enum.reverse(acc)
+    end
   end
 end

@@ -19,10 +19,12 @@ defmodule TP do
   `TP.Attribute`), validated at compile time.
 
   Every schema with `TP` fields needs `use TP`, before `schema`. It checks the whole namespace when the schema
-  compiles (see `TP.Namespace`) and takes one option:
+  compiles (see `TP.Namespace`) and takes these options:
 
     * `:distance_metric` - `:cosine_distance` or `:euclidean_squared`, required when the namespace has vector
       columns, including the ones native embedding computes. turbopuffer applies it to every vector column.
+    * `:num_shards` - partitions the namespace across 1 to 256 shards, to grow past one index's size limit. It's
+      fixed when the namespace is created, so changing it later makes writes fail. See `docs/turbopuffer/sharding.md`.
 
   Casting is lenient the way Ecto's own types are: `"7"` casts to an int, and a date to a datetime at midnight UTC.
   Dumping only encodes values that already fit the type. turbopuffer stores datetimes at millisecond precision, so
@@ -38,26 +40,40 @@ defmodule TP do
 
   defmacro __using__(opts) do
     quote bind_quoted: [opts: opts] do
-      @tp_distance_metric TP.__distance_metric__!(opts)
+      @tp_options TP.__options__!(opts)
+      @tp_distance_metric @tp_options.distance_metric
       @after_compile TP
 
       @doc false
-      def __tp__(:distance_metric), do: @tp_distance_metric
+      def __tp__(:distance_metric), do: @tp_options.distance_metric
+      def __tp__(:num_shards), do: @tp_options.num_shards
     end
   end
 
   @doc false
-  def __distance_metric__!(opts) do
-    case Keyword.validate!(opts, [:distance_metric])[:distance_metric] do
-      nil ->
-        nil
+  def __options__!(opts) do
+    opts = Keyword.validate!(opts, [:distance_metric, :num_shards])
 
-      metric when metric in [:cosine_distance, :euclidean_squared] ->
-        Atom.to_string(metric)
+    distance_metric =
+      case opts[:distance_metric] do
+        nil ->
+          nil
 
-      other ->
-        raise ArgumentError, ":distance_metric must be :cosine_distance or :euclidean_squared, got: #{inspect(other)}"
-    end
+        metric when metric in [:cosine_distance, :euclidean_squared] ->
+          Atom.to_string(metric)
+
+        other ->
+          raise ArgumentError,
+                ":distance_metric must be :cosine_distance or :euclidean_squared, got: #{inspect(other)}"
+      end
+
+    num_shards =
+      case opts[:num_shards] do
+        shards when is_nil(shards) or (is_integer(shards) and shards in 1..256) -> shards
+        other -> raise ArgumentError, ":num_shards must be an integer from 1 to 256, got: #{inspect(other)}"
+      end
+
+    %{distance_metric: distance_metric, num_shards: num_shards}
   end
 
   @doc false
@@ -251,12 +267,18 @@ defmodule TP do
 
   defp load_value(base64, :bytes) when is_binary(base64), do: Base.decode64(base64)
 
-  # Like writes, base64 vectors in responses are little-endian f32 whatever the element type (query.md,
-  # vector_encoding).
-  defp load_value(base64, {:vector, dims, _element} = type) when is_binary(base64) do
+  # query.md says base64 vectors in responses are little-endian f32, like writes, but turbopuffer sends each
+  # attribute's own element type: 2 bytes per f16 and 1 per i8.
+  defp load_value(base64, {:vector, dims, element} = type) when is_binary(base64) do
     case Base.decode64(base64) do
-      {:ok, binary} when byte_size(binary) == dims * 4 ->
-        load_value(for(<<value::float-32-little <- binary>>, do: value), type)
+      {:ok, binary} when byte_size(binary) == dims * 4 and element == :f32 ->
+        vector(for(<<value::float-32-little <- binary>>, do: value), type)
+
+      {:ok, binary} when byte_size(binary) == dims * 2 and element == :f16 ->
+        vector(for(<<value::float-16-little <- binary>>, do: value), type)
+
+      {:ok, binary} when byte_size(binary) == dims and element == :i8 ->
+        vector(for(<<value::signed-8 <- binary>>, do: value), type)
 
       _ ->
         :error
