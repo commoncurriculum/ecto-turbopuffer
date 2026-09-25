@@ -23,6 +23,10 @@ defmodule Ecto.Adapters.Turbopuffer do
   A schema's source is its namespace. An Ecto prefix, from `@schema_prefix`, the `:prefix` option, or the repo's
   `default_options/1`, is prepended with a dash: `prefix: "staging"` reads and writes `staging-card_stacks`.
 
+  The functions below cover turbopuffer's namespace endpoints. Each takes the repo and a schema, and `:prefix` like a
+  query; each raises `TP.Error` when turbopuffer returns an error, including 404 for a namespace nothing has been
+  written to yet.
+
   ## Writes
 
   Writes that store values send the schema's `TP.Namespace` schema and distance metric, so a namespace is created
@@ -33,6 +37,12 @@ defmodule Ecto.Adapters.Turbopuffer do
       and raises `TP.ConflictError` naming the rest. Pass `on_conflict: :nothing` to skip existing ids or
       `on_conflict: :replace_all` to overwrite them. turbopuffer can't replace only some fields of an existing
       document, so other `:on_conflict` values raise.
+    * With `on_conflict: :replace_all`, `replace_if:` takes a dynamic an existing document must match to be
+      replaced, where `ref_new(field)` is the value being written: `dynamic([c], c.updated_at < ref_new(c.updated_at))`
+      only replaces older documents. Ids that don't exist yet are written either way.
+    * `disable_backpressure: true` skips the 429s turbopuffer returns while unindexed writes pile up, for bulk loads
+      with `on_conflict: :replace_all`. Strongly consistent queries fail until indexing catches up, so query with
+      `consistency: :eventual` meanwhile. See `docs/turbopuffer/write.md#param-disable_backpressure`.
     * `insert_all` sends at most 30 rows per request for schemas with native embedding, turbopuffer's limit, and
       1,000 otherwise. Set `:batch_size` to change that. Batches aren't atomic.
     * `update` patches the changed fields. turbopuffer can't change ids, or patch vectors or the text it embeds
@@ -55,7 +65,10 @@ defmodule Ecto.Adapters.Turbopuffer do
       its own, not the union's. Pass `rerank_by: :rrf` (or `{:rrf, weights: [2, 1], rank_constant: 60, limit: 20,
       offset: 0}`) to have turbopuffer fuse them into one ranking with reciprocal rank fusion; then every query
       must select the same fields.
+    * `limit_per: {[:planbook_id], 2}` returns at most 2 rows per planbook, for more varied results. The query
+      needs a limit.
     * `consistency: :eventual` trades freshness for throughput. See `docs/turbopuffer/query.md#param-consistency`.
+    * Queries that select vector fields read them as base64, which is smaller and faster to decode.
     * A namespace that hasn't been written to yet reads as empty.
     * No joins, subqueries, distinct, or having.
 

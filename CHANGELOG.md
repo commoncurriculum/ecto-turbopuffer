@@ -2,6 +2,20 @@
 
 ## Unreleased
 
+### Features
+
+- `Ecto.Adapters.Turbopuffer.metadata/3`, `update_metadata/4` (`read_only`, `pinning`), `warm_cache/3`,
+  `delete_namespace/3`, `list_namespaces/2`, `update_schema/3`, `branch/3`, `copy/3` and `recall/3` cover
+  turbopuffer's namespace endpoints, by schema.
+- `TP.Query` ranks by `attribute/1`, `distance/2`, `saturate/2,3` and `decay/2,3`, takes filters as score boosts
+  and numbers in `max_score/2`, and computes any non-vector score in a `select`. `highlight/1,2` selects the
+  fragments of a field that match.
+- `Repo.all(query, limit_per: {fields, n})` caps the rows sharing values of `fields`.
+- `insert` and `insert_all` take `replace_if:`, a condition an existing document must match to be replaced, where
+  `ref_new/1` is the value being written, and `disable_backpressure: true` for bulk loads.
+- `use TP, num_shards: n` shards the namespace.
+- Queries that select vectors read them as base64.
+
 ### Breaking changes
 
 - Every schema with `TP` fields needs `use TP`, which checks the namespace when the schema compiles. The
@@ -36,7 +50,9 @@
   that `rank_constant` is an integer above 0, and its limit and offset; `:batch_size` must be an integer above 0.
 - `rerank_by` without a `union_all` raises.
 - Sparse vector weights are range-checked like f16 vectors.
-- base64 vectors in responses decode as f32 whatever the element type, as turbopuffer sends them.
+- base64 vectors in responses decode by the attribute's element type: 4 bytes for f32, 2 for f16 and 1 for i8, as
+  turbopuffer sends them, though its docs say they're always f32.
+- `vector_distance(field, embed(text))` raises, since turbopuffer can't compute it.
 - `autogenerate: true` on a string or uint id fails at compile time.
 - Namespace limits are always checked at compile time.
 
@@ -44,4 +60,5 @@
 
 - `TP.Query`'s operators are Ecto keyword fragments, listed in one table.
 - One planner builds every request body, and an expression compiler builds the filters and scores in them.
-- Most tests run offline.
+- Tests run against turbopuffer, covering every endpoint, parameter, operator, type and embedding model in its
+  docs, which `test/coverage_test.exs` checks. Offline tests cover only what the adapter refuses before sending.

@@ -81,7 +81,8 @@ defmodule Ecto.Adapters.Turbopuffer.NativeEmbeddingTest do
       | for(i <- 1..28, do: "Practice problem #{i}: add the fractions.")
     ]
 
-    {{31, nil}, writes} = requests(fn -> Repo.insert_all(Lesson, Enum.map(texts, &%{markdown: &1})) end)
+    lessons = Enum.map(texts, &%{id: Ecto.UUID.generate(), markdown: &1})
+    {{31, nil}, writes} = requests(fn -> Repo.insert_all(Lesson, lessons) end)
     assert Enum.map(writes, &length(&1.query["upsert_rows"])) == [30, 1]
 
     [photosynthesis | _] =

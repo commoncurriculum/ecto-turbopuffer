@@ -337,6 +337,10 @@ defmodule TP.Attribute do
     config
   end
 
+  defp pre_tokenized!(%{"stemming" => true, "case_sensitive" => true}, _type) do
+    raise ArgumentError, "turbopuffer can't stem case-sensitive text, so set stemming or case_sensitive to false"
+  end
+
   defp pre_tokenized!(config, _type), do: config
 
   defp filterable?(type, options) do

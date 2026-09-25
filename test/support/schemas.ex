@@ -16,7 +16,7 @@ defmodule TP.Test.Everything do
       full_text_search: [
         tokenizer: :word_v3,
         language: :french,
-        stemming: true,
+        stemming: false,
         remove_stopwords: true,
         case_sensitive: true,
         ascii_folding: true,

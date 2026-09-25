@@ -33,6 +33,7 @@ defmodule TP.AttributeTest do
           {"string", [full_text_search: [max_token_length: 255]], ~r/between 1 and 254/},
           {"string", [full_text_search: [b: 1.5]], ~r/:b must be a number between 0.0 and 1.0/},
           {"string", [full_text_search: [k1: 0]], ~r/:k1 must be a number greater than 0/},
+          {"string", [full_text_search: [stemming: true, case_sensitive: true]], ~r/can't stem case-sensitive text/},
           {"[3]f32", [], ~r/\[3\]f32 attributes require `ann: true`/},
           {"[3]i8", [ann: false], ~r/\[3\]i8 attributes take `ann: true`, got: false/},
           {"[3]f32", [ann: [distance_metric: :cosine_distance]],
