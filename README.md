@@ -66,8 +66,7 @@ Add `MyApp.Search` to your supervision tree like any other repo.
   `sparse_knn`, `embed`, `fuzzy`, `regex`, `contains_all_tokens`, `dist`, and so on.
 
 HTTP goes through the [`turbopuffer`](https://github.com/commoncurriculum/turbopuffer) driver, our fork of
-[jallum/turbopuffer](https://github.com/jallum/turbopuffer) whose `combined` branch carries the fixes we've proposed
-upstream. The driver works without Ecto; `Ecto.Adapters.Turbopuffer.client(MyApp.Search)` returns the repo's
+[jallum/turbopuffer](https://github.com/jallum/turbopuffer) that carries the fixes we've proposed upstream. The driver works without Ecto; `Ecto.Adapters.Turbopuffer.client(MyApp.Search)` returns the repo's
 `Turbopuffer.Client` for calls like namespace metadata, deletion, or anything else the adapter doesn't cover.
 Typed results stay here, in `TP`, because turbopuffer's JSON doesn't say which strings are datetimes or uuids.
 

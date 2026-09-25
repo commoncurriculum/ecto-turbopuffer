@@ -27,8 +27,8 @@ defmodule EctoTurbopuffer.MixProject do
   defp deps do
     [
       {:ecto, "~> 3.13"},
-      # Our fork's `combined` branch carries the fixes proposed upstream to jallum/turbopuffer.
-      {:turbopuffer, github: "commoncurriculum/turbopuffer", branch: "combined"},
+      # Our fork carries the fixes proposed upstream to jallum/turbopuffer.
+      {:turbopuffer, github: "commoncurriculum/turbopuffer"},
       # The driver uses Jason before Elixir 1.18.
       {:jason, "~> 1.4"},
       {:telemetry, "~> 1.0"}
