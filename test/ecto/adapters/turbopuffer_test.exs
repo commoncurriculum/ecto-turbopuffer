@@ -52,4 +52,23 @@ defmodule Ecto.Adapters.TurbopufferTest do
     assert error.status == nil
     assert error.message =~ "connection refused"
   end
+
+  test "keeps the API key a copy from another organization sends out of telemetry" do
+    start_repo(name: nil, base_url: "http://127.0.0.1:1", max_retries: 0)
+    handler = make_ref()
+    :telemetry.attach(handler, [:tp, :test, :repo, :query], &__MODULE__.send_query/4, self())
+    on_exit(fn -> :telemetry.detach(handler) end)
+
+    assert_raise TP.Error, fn ->
+      Ecto.Adapters.Turbopuffer.copy(Repo, CardStack,
+        from: "source",
+        from_region: "aws-us-east-1",
+        from_api_key: "tpuf_secret"
+      )
+    end
+
+    assert_received %{"copy_from_namespace" => %{"source_namespace" => "source", "source_api_key" => "[REDACTED]"}}
+  end
+
+  def send_query(_event, _measurements, metadata, test), do: send(test, metadata.query)
 end

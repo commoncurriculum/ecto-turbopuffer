@@ -225,11 +225,14 @@ defmodule Ecto.Adapters.Turbopuffer do
 
   @doc """
   Measures the recall of a namespace's vector index (`docs/turbopuffer/recall.md`), returning `"avg_recall"`,
-  `"avg_ann_count"` and `"avg_exhaustive_count"`. Given a schema, turbopuffer searches for `:num` random documents'
-  vectors (25 by default). Given a query, it measures the query's own vector search, filters, and limit.
+  `"avg_ann_count"` and `"avg_exhaustive_count"`: turbopuffer searches for `:num` random documents' vectors (25 by
+  default), comparing its index's top `:top_k` (10 by default) to an exact search. Given a query, the searches
+  keep to its `where`, and its `limit` is the top_k.
 
-      Ecto.Adapters.Turbopuffer.recall(Repo, from(c in CardStack,
-        where: c.planbook_id == ^id, order_by: ann(c.vector, ^vector), limit: 10))
+      Ecto.Adapters.Turbopuffer.recall(Repo, from(c in CardStack, where: c.planbook_id == ^id, limit: 10), num: 5)
+
+  turbopuffer's docs say recall can also measure a given search (`rank_by`), but it answers one with a 404 for a
+  namespace that exists, so a query with an `order_by` raises.
   """
   @spec recall(Ecto.Repo.t(), Ecto.Queryable.t(), keyword()) :: map()
   def recall(repo, queryable, opts \\ []) do
@@ -440,13 +443,19 @@ defmodule Ecto.Adapters.Turbopuffer do
       repo: repo,
       kind: kind,
       source: namespace,
-      query: body,
+      query: redact(body),
       result: result,
       options: Keyword.get(opts, :telemetry_options, [])
     })
 
     result
   end
+
+  # Telemetry handlers often log requests, so the API key a copy from another organization sends stays out of them.
+  defp redact(%{"copy_from_namespace" => %{"source_api_key" => _} = from} = body),
+    do: %{body | "copy_from_namespace" => %{from | "source_api_key" => "[REDACTED]"}}
+
+  defp redact(body), do: body
 
   defp request!(meta, method, path, body, opts, kind, namespace) do
     case request(meta, method, path, body, opts, kind, namespace) do

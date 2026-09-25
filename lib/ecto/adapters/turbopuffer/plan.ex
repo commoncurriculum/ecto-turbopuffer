@@ -46,17 +46,20 @@ defmodule Ecto.Adapters.Turbopuffer.Plan do
   end
 
   @doc """
-  The body of a recall evaluation (docs/turbopuffer/recall.md): the query's filters, its vector search as the
-  rank_by, and its limit as top_k, unless `opts` sets `:top_k` or `:num`.
+  The body of a recall evaluation (docs/turbopuffer/recall.md): the query's filters, and its limit as top_k,
+  unless `opts` sets `:top_k`. turbopuffer answers a recall with a `rank_by` with a 404 for a namespace that
+  exists, so a query's `order_by` raises.
   """
   def recall(query, params, opts) do
     ctx = context(query, params, :all)
     opts = Keyword.validate!(opts, [:num, :top_k, :prefix, :telemetry_options])
-    rank_by = if query.order_bys != [], do: ctx |> Expr.rank_by() |> elem(0)
+
+    if query.order_bys != [] do
+      Expr.error!(query, "turbopuffer's recall endpoint can't take a rank_by yet, so recall can't take an order_by")
+    end
 
     %{}
     |> put("filters", filters(ctx, nil))
-    |> put("rank_by", rank_by)
     |> put("top_k", opts[:top_k] || if(query.limit, do: limit(ctx)))
     |> put("num", opts[:num])
   end

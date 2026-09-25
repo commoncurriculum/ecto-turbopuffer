@@ -17,7 +17,7 @@ defmodule TP.Test.Everything do
         tokenizer: :word_v3,
         language: :french,
         stemming: false,
-        remove_stopwords: true,
+        remove_stopwords: false,
         case_sensitive: true,
         ascii_folding: true,
         max_token_length: 40,

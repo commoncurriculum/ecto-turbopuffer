@@ -248,7 +248,10 @@ defmodule TP.CoverageTest do
               "recall.md num" => @namespaces_recall,
               "recall.md top_k" => @namespaces_recall,
               "recall.md filters" => @namespaces_recall,
-              "recall.md rank_by" => @namespaces_recall,
+              "recall.md rank_by" =>
+                {:not_supported,
+                 "turbopuffer answers a recall with a rank_by with a 404 for a namespace that exists, and one with " <>
+                   "kNN with 'query type not supported', so recall/3 rejects an order_by (plan_test.exs)"},
               "recall.md avg_recall" => @namespaces_recall,
               "recall.md avg_exhaustive_count" => @namespaces_recall,
               "recall.md avg_ann_count" => @namespaces_recall,

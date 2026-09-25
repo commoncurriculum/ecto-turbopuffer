@@ -337,11 +337,15 @@ defmodule TP.Attribute do
     config
   end
 
-  defp pre_tokenized!(%{"stemming" => true, "case_sensitive" => true}, _type) do
-    raise ArgumentError, "turbopuffer can't stem case-sensitive text, so set stemming or case_sensitive to false"
-  end
+  defp pre_tokenized!(config, _type) do
+    if config["case_sensitive"] == true and (config["stemming"] == true or config["remove_stopwords"] == true) do
+      raise ArgumentError,
+            "turbopuffer doesn't stem or remove stopwords from case-sensitive text, so set case_sensitive: false, or " <>
+              "stemming: false and remove_stopwords: false"
+    end
 
-  defp pre_tokenized!(config, _type), do: config
+    config
+  end
 
   defp filterable?(type, options) do
     TP.Types.filterable?(type) and
