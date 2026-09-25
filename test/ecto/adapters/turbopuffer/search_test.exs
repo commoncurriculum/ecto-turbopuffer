@@ -111,9 +111,9 @@ defmodule Ecto.Adapters.Turbopuffer.SearchTest do
 
     test "attribute/1 scores a number, and a signed number's negatives as 0" do
       assert [{"popular", 1_000.0}, {"recent", 100.0}, {"old", 10.0}] = scored(dynamic([e], attribute(e.views)))
-      assert [{"popular", 5.0}, {"recent", 1.0}, {"old", 0.0}] = scored(dynamic([e], attribute(e.position)))
+      assert [{"popular", 5.0}, {"recent", 1.0}, {"old", +0.0}] = scored(dynamic([e], attribute(e.position)))
 
-      assert [{"popular", 5.0}, {"recent", 1.0}, {"old", 0.0}] =
+      assert [{"popular", 5.0}, {"recent", 1.0}, {"old", +0.0}] =
                scored(dynamic([e], max_score(0, attribute(e.position))))
 
       assert Enum.sort(scored(dynamic([e], max_score(2, attribute(e.position))))) ==
@@ -140,7 +140,7 @@ defmodule Ecto.Adapters.Turbopuffer.SearchTest do
                scored(dynamic([e], decay(distance(e.updated_at, ^now), "6h")))
 
       assert [{"recent", 1.0} | _] = scored(dynamic([e], decay(distance(e.updated_at, ^now), 21_600_000)))
-      assert [{"popular", 900.0}, {"old", 90.0}, {"recent", 0.0}] = scored(dynamic([e], distance(e.views, 100)))
+      assert [{"popular", 900.0}, {"old", 90.0}, {"recent", +0.0}] = scored(dynamic([e], distance(e.views, 100)))
     end
 
     test "a filter scores 1 where it matches, so it boosts documents or ranks them alone" do
@@ -153,7 +153,7 @@ defmodule Ecto.Adapters.Turbopuffer.SearchTest do
     end
 
     test "a select computes any score but a vector search for each row, and a filter as a boolean" do
-      assert [{"old", old, false, 0.0}, {"recent", 0.5, true, 1.0}] =
+      assert [{"old", old, false, +0.0}, {"recent", 0.5, true, 1.0}] =
                Repo.all(
                  from e in Everything,
                    where: e.id in ["recent", "old"],

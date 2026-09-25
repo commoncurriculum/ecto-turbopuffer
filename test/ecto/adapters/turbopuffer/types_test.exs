@@ -58,44 +58,49 @@ defmodule Ecto.Adapters.Turbopuffer.TypesTest do
     Repo.insert!(%MultiEmbed{id: "m", default: "a", quantized: "b", declared: "c", wide: "d"})
     Repo.insert!(%TextSettings{id: "t"})
 
-    for schema <- [Everything, Lesson, ShardedStack, MultiEmbed, TextSettings] do
-      stored = Turbopuffer.metadata(Repo, schema)["schema"]
-      namespace = TP.Namespace.new(schema)
+    mismatches =
+      for schema <- [Everything, Lesson, ShardedStack, MultiEmbed, TextSettings],
+          stored = Turbopuffer.metadata(Repo, schema)["schema"],
+          namespace = TP.Namespace.new(schema),
+          attribute <- namespace.attributes,
+          entry = Map.fetch!(stored, attribute.name),
+          label = "#{inspect(schema)}.#{attribute.field}",
+          mismatch <- attribute_mismatches(attribute, entry, namespace, label),
+          do: mismatch
 
-      for attribute <- namespace.attributes do
-        stored_entry = Map.fetch!(stored, attribute.name)
-        label = "#{inspect(schema)}.#{attribute.field}"
+    assert mismatches == []
+  end
 
-        assert stored_entry["type"] == TP.Types.encode(attribute.type), "#{label}'s type"
-
-        if Map.has_key?(stored_entry, "filterable") and not attribute.primary_key do
-          assert stored_entry["filterable"] == attribute.filterable, "whether #{label} is filterable"
-        end
-
-        for {option, value} <- Map.delete(TP.Attribute.to_schema(attribute), "type") do
-          # An embedding model given as a string comes back as its model and target attribute.
-          stored =
-            if option == "embed" and is_binary(value), do: stored_entry[option]["model"], else: stored_entry[option]
-
-          assert_stored(stored, value, "#{label}'s #{option}")
-        end
-
-        if attribute.options[:ann] do
-          assert stored_entry["ann"]["distance_metric"] == namespace.distance_metric, "#{label}'s distance metric"
-        end
+  defp attribute_mismatches(attribute, entry, namespace, label) do
+    options =
+      for {option, declared} <- Map.delete(TP.Attribute.to_schema(attribute), "type") do
+        # An embedding model given as a string comes back as its model and target attribute.
+        stored = if option == "embed" and is_binary(declared), do: entry[option]["model"], else: entry[option]
+        mismatches(stored, declared, "#{label}'s #{option}")
       end
-    end
+
+    List.flatten([
+      mismatches(entry["type"], TP.Types.encode(attribute.type), "#{label}'s type"),
+      if(Map.has_key?(entry, "filterable") and not attribute.primary_key,
+        do: mismatches(entry["filterable"], attribute.filterable, "whether #{label} is filterable"),
+        else: []
+      ),
+      if(attribute.options[:ann],
+        do: mismatches(entry["ann"]["distance_metric"], namespace.distance_metric, "#{label}'s distance metric"),
+        else: []
+      )
+      | options
+    ])
   end
 
   # turbopuffer echoes settings back as their full configuration: `true` as every BM25 parameter or an ANN index's
   # distance metric, and an embedding without dims and dtype, which show in the target's type instead.
-  defp assert_stored(stored, true, label), do: assert(stored not in [nil, false], "#{label}: #{inspect(stored)}")
+  defp mismatches(stored, true, label), do: if(stored in [nil, false], do: ["#{label}: #{inspect(stored)}"], else: [])
 
-  defp assert_stored(stored, %{} = declared, label) do
-    for {key, value} <- declared, key not in ["dims", "dtype"], do: assert_stored(stored[key], value, "#{label}.#{key}")
+  defp mismatches(stored, %{} = declared, label) do
+    for {key, value} <- declared, key not in ["dims", "dtype"], do: mismatches(stored[key], value, "#{label}.#{key}")
   end
 
-  defp assert_stored(stored, declared, label) do
-    assert stored == declared, "#{label}: turbopuffer stored #{inspect(stored)}, TP declared #{inspect(declared)}"
-  end
+  defp mismatches(stored, declared, _label) when stored == declared, do: []
+  defp mismatches(stored, declared, label), do: ["#{label}: stored #{inspect(stored)}, declared #{inspect(declared)}"]
 end
