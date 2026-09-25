@@ -74,13 +74,33 @@ defmodule TP.Attribute do
   @typedoc """
   What a query can do with an attribute: filter it (`:filter`), match it with a pattern or text index (`:glob`,
   `:regex`, `:fuzzy`, `:full_text_search`), rank it by vector (`:ann` with an index, `:vector` exactly), by
-  embedded text (`:embed`) or sparse vector (`:sparse_knn`), or patch it in place (`:patch`).
+  `embed(text)` (`:embed`, or `:embed_model` when the query names the model), or by sparse vector
+  (`:sparse_knn`), or patch it in place (`:patch`).
   """
   @type capability ::
-          :filter | :glob | :regex | :fuzzy | :full_text_search | :ann | :vector | :embed | :sparse_knn | :patch
+          :filter
+          | :glob
+          | :regex
+          | :fuzzy
+          | :full_text_search
+          | :ann
+          | :vector
+          | :embed
+          | :embed_model
+          | :sparse_knn
+          | :patch
 
-  @typedoc "Native embedding: turbopuffer embeds the attribute's text with `model` and stores the vector in `target`."
-  @type embed :: %{model: String.t(), target: String.t(), dims: pos_integer() | nil, dtype: String.t() | nil}
+  @typedoc """
+  Native embedding: turbopuffer embeds the attribute's text with `model` and stores the vector in `target`, which
+  the schema named when `explicit_target?`.
+  """
+  @type embed :: %{
+          model: String.t(),
+          target: String.t(),
+          explicit_target?: boolean(),
+          dims: pos_integer() | nil,
+          dtype: String.t() | nil
+        }
 
   @typedoc "`options` holds the validated schema options, as turbopuffer's JSON values, for `to_schema/1`."
   @type t :: %__MODULE__{
@@ -102,7 +122,8 @@ defmodule TP.Attribute do
   def new(opts) do
     type = type!(opts)
     primary_key = opts[:primary_key] == true
-    name = name!(opts, type, primary_key)
+    name = name!(opts, primary_key)
+    key!(opts, type, primary_key)
     options = options!(opts, type, primary_key)
     filterable = not primary_key and filterable?(type, options)
     embed = embed(options[:embed], name)
@@ -145,7 +166,7 @@ defmodule TP.Attribute do
     end
   end
 
-  defp name!(opts, type, primary_key) do
+  defp name!(opts, primary_key) do
     field = opts[:field] || raise ArgumentError, "TP needs the field's name; Ecto schemas pass it as `:field`"
     name = to_string(opts[:source] || field)
 
@@ -162,6 +183,13 @@ defmodule TP.Attribute do
       primary_key and name != "id" ->
         raise ArgumentError, "turbopuffer ids must be named `id` (add `source: :id` to keep the field name)"
 
+      true ->
+        name
+    end
+  end
+
+  defp key!(opts, type, primary_key) do
+    cond do
       primary_key and type not in @id_types ->
         raise ArgumentError, "turbopuffer ids must be string, uint, or uuid; got #{TP.Types.encode(type)}"
 
@@ -169,7 +197,7 @@ defmodule TP.Attribute do
         raise ArgumentError, "TP can only autogenerate uuid values, not #{TP.Types.encode(type)}"
 
       true ->
-        name
+        :ok
     end
   end
 
@@ -187,7 +215,7 @@ defmodule TP.Attribute do
       raise ArgumentError, unsupported(key, type, primary_key)
     end
 
-    if match?({:vector, _, _}, type) and not Keyword.has_key?(options, :ann) do
+    if kind(type) == :vector and not Keyword.has_key?(options, :ann) do
       raise ArgumentError, "#{TP.Types.encode(type)} attributes require `ann: true`"
     end
 
@@ -318,12 +346,13 @@ defmodule TP.Attribute do
   end
 
   defp embed(nil, _name), do: nil
-  defp embed(model, name) when is_binary(model), do: %{model: model, target: "embed_" <> name, dims: nil, dtype: nil}
+  defp embed(model, name) when is_binary(model), do: embed(%{"model" => model}, name)
 
   defp embed(config, name) do
     %{
       model: config["model"],
       target: config["attribute"] || "embed_" <> name,
+      explicit_target?: Map.has_key?(config, "attribute"),
       dims: config["dims"],
       dtype: config["dtype"]
     }
@@ -332,15 +361,17 @@ defmodule TP.Attribute do
   defp capabilities(type, primary_key, filterable, options, embed) do
     [
       filter: primary_key or filterable,
-      # turbopuffer still runs Glob on attributes that are only filterable.
-      glob: primary_key or filterable or options[:glob] == true,
+      # Glob matches strings, and turbopuffer still runs it on those that are only filterable.
+      glob: kind(type) in [:string, :string_array] and (primary_key or filterable or options[:glob] == true),
       regex: options[:regex] == true,
       fuzzy: options[:fuzzy] == true,
       full_text_search: options[:full_text_search] not in [nil, false],
-      ann: match?({:vector, _, _}, type) or options[:ann] not in [nil, false],
+      ann: options[:ann] not in [nil, false],
       vector: TP.Types.vector?(type),
-      embed: match?({:vector, _, _}, type) or embed != nil,
-      sparse_knn: match?({:sparse_vector, _}, type),
+      embed: embed != nil,
+      # A vector attribute can be ranked by embedded text when the query names the model.
+      embed_model: embed != nil or kind(type) == :vector,
+      sparse_knn: kind(type) == :sparse_vector,
       patch: not (primary_key or TP.Types.vector?(type) or embed != nil)
     ]
     |> Enum.filter(fn {_capability, able} -> able end)
@@ -356,10 +387,23 @@ defmodule TP.Attribute do
   end
 
   defp requirement(attribute, :filter), do: "#{inspect(attribute.field)} isn't filterable"
-  defp requirement(attribute, :glob), do: "#{inspect(attribute.field)} needs `glob: true` or to be filterable"
+
+  defp requirement(attribute, :glob) do
+    if kind(attribute.type) in [:string, :string_array],
+      do: "#{inspect(attribute.field)} needs `glob: true` or to be filterable",
+      else: "#{inspect(attribute.field)} isn't a string or []string, so it can't be matched with a glob"
+  end
+
   defp requirement(attribute, :ann), do: "#{inspect(attribute.field)} has no ANN index"
   defp requirement(attribute, :vector), do: "#{inspect(attribute.field)} isn't a vector"
-  defp requirement(attribute, :embed), do: "#{inspect(attribute.field)} isn't embedded text or a vector"
+
+  defp requirement(attribute, :embed) do
+    if kind(attribute.type) == :vector,
+      do: "#{inspect(attribute.field)} is a vector, so embed(text) needs the model: embed(^text, ^model)",
+      else: "#{inspect(attribute.field)} isn't embedded text"
+  end
+
+  defp requirement(attribute, :embed_model), do: "#{inspect(attribute.field)} isn't embedded text or a vector"
   defp requirement(attribute, :sparse_knn), do: "#{inspect(attribute.field)} isn't a sparse vector"
   defp requirement(attribute, index), do: "#{inspect(attribute.field)} needs `#{index}:`"
 

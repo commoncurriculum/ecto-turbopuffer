@@ -9,8 +9,8 @@ defmodule TP.ConflictError do
 
   @impl true
   def message(%__MODULE__{} = error) do
-    "#{length(error.ids)} of #{error.count} ids already exist in #{error.namespace}, so they weren't inserted and " <>
-      "the rest were: #{inspect(error.ids)}. Pass on_conflict: :replace_all to overwrite them or :nothing to skip " <>
-      "them."
+    "#{length(error.ids)} of #{error.count} ids already exist in #{error.namespace} and weren't inserted: " <>
+      "#{inspect(error.ids)}. The other #{error.count - length(error.ids)} were. Pass on_conflict: :replace_all " <>
+      "to overwrite existing ids or :nothing to skip them."
   end
 end

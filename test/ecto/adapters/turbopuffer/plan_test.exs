@@ -94,6 +94,13 @@ defmodule Ecto.Adapters.Turbopuffer.PlanTest do
       assert filters(from c in CardStack, where: false, or_where: c.id == "a") == ["id", "Eq", "a"]
     end
 
+    test "a leading or_where has nothing to join, so it's the filter" do
+      assert filters(from c in CardStack, or_where: c.id == "a") == ["id", "Eq", "a"]
+
+      query = Enum.reduce(["a", "b"], CardStack, fn id, query -> or_where(query, [c], c.id == ^id) end)
+      assert filters(query) == ["Or", [["id", "Eq", "a"], ["id", "Eq", "b"]]]
+    end
+
     test "like and ilike become globs" do
       assert filters(from c in CardStack, where: like(c.title, "Photo%")) == ["title", "Glob", "Photo*"]
       assert filters(from c in CardStack, where: ilike(c.title, ^"%REV_")) == ["title", "IGlob", "*REV?"]
@@ -146,7 +153,8 @@ defmodule Ecto.Adapters.Turbopuffer.PlanTest do
             {from(c in CardStack, where: like(c.markdown, "x")), ~r/:markdown needs `glob: true` or to be filterable/},
             {from(c in CardStack, where: contains_all_tokens(c.planbook_id, "x")),
              ~r/:planbook_id needs `full_text_search:`/},
-            {from(e in Everything, where: regex(e.tags, "x")), ~r/:tags needs `regex:`/}
+            {from(e in Everything, where: regex(e.tags, "x")), ~r/:tags needs `regex:`/},
+            {from(l in Lesson, where: like(l.id, "abc%")), ~r/:id isn't a string or \[\]string, so it can't be matched/}
           ] do
         assert_raise Ecto.QueryError, message, fn -> plan(query) end
       end
@@ -232,8 +240,11 @@ defmodule Ecto.Adapters.Turbopuffer.PlanTest do
             {from(c in CardStack, order_by: [desc: bm25(c.planbook_id, "x")], limit: 1),
              ~r/:planbook_id needs `full_text_search:` in TP.Test.CardStack/},
             {from(c in CardStack, order_by: ann(c.markdown, ^[1.0]), limit: 1), ~r/:markdown has no ANN index/},
-            {from(c in CardStack, order_by: ann(c.markdown, embed(^"x")), limit: 1),
+            {from(c in CardStack, order_by: ann(c.markdown, embed(^"x")), limit: 1), ~r/:markdown isn't embedded text/},
+            {from(c in CardStack, order_by: ann(c.markdown, embed(^"x", ^"m")), limit: 1),
              ~r/:markdown isn't embedded text or a vector/},
+            {from(c in CardStack, order_by: ann(c.vector, embed(^"x")), limit: 1),
+             ~r/:vector is a vector, so embed\(text\) needs the model: embed\(\^text, \^model\)/},
             {from(c in CardStack, order_by: knn(c.title, ^[1.0]), limit: 1), ~r/:title isn't a vector/},
             {from(c in CardStack, order_by: [desc: sparse_knn(c.vector, ^%{})], limit: 1),
              ~r/:vector isn't a sparse vector/},
@@ -362,12 +373,19 @@ defmodule Ecto.Adapters.Turbopuffer.PlanTest do
       assert Plan.page(plan, response) == {[["a", "T"], ["b", "M"]], nil}
     end
 
-    test "flattens nested unions", %{text: text, vector: vector, exact: exact} do
+    test "flattens nested unions, with each leg's own parameters", %{text: text, vector: vector, exact: exact} do
+      legs = [
+        ["markdown", "BM25", "x"],
+        ["vector", "ANN", [0.0, 0.0, 1.0]],
+        ["vector", "kNN", [1.0, 0.0, 0.0]]
+      ]
+
       queries = body(union_all(text, ^union_all(vector, ^exact)))["queries"]
-      assert Enum.map(queries, &Enum.at(&1["rank_by"], 1)) == ["BM25", "ANN", "kNN"]
+      assert Enum.map(queries, & &1["rank_by"]) == legs
+      assert Enum.map(queries, & &1["limit"]) == [2, 2, 3]
 
       queries = body(text |> union_all(^vector) |> union_all(^exact))["queries"]
-      assert Enum.map(queries, &Enum.at(&1["rank_by"], 1)) == ["BM25", "ANN", "kNN"]
+      assert Enum.map(queries, & &1["rank_by"]) == legs
     end
 
     test "runs against one namespace", %{text: text} do
@@ -402,7 +420,12 @@ defmodule Ecto.Adapters.Turbopuffer.PlanTest do
 
       for {query, opts, message} <- [
             {union_all(text, ^same), [rerank_by: {:rrf, wieghts: [1, 5]}], ~r/unknown keys \[:wieghts\]/},
-            {union_all(text, ^same), [rerank_by: {:rrf, weights: [1]}], ~r/one weight for each of the 2 searches/},
+            {union_all(text, ^same), [rerank_by: {:rrf, weights: [1]}],
+             ~r/a weight above 0 for each of the 2 searches/},
+            {union_all(text, ^same), [rerank_by: {:rrf, weights: [0, -1]}], ~r/a weight above 0 for each/},
+            {union_all(text, ^same), [rerank_by: {:rrf, weights: ["a", nil]}], ~r/a weight above 0 for each/},
+            {union_all(text, ^same), [rerank_by: {:rrf, rank_constant: 0}],
+             ~r/rank_constant must be an integer above 0/},
             {union_all(text, ^same), [rerank_by: {:rrf, limit: 10_000, offset: 1}], ~r/rerank_by: .*can't exceed/},
             {union_all(text, ^same), [rerank_by: :mmr], ~r/unknown :rerank_by :mmr/},
             {text, [rerank_by: :rrf], ~r/rerank_by fuses the searches of a union_all, but this query has only one/}
@@ -493,71 +516,83 @@ defmodule Ecto.Adapters.Turbopuffer.PlanTest do
       assert write(:delete_all, CardStack).body == %{"delete_by_filter" => ["id", "NotEq", nil]}
       assert write(:delete_all, from(c in CardStack, where: false)).body == %{"delete_by_filter" => ["id", "Eq", nil]}
     end
+
+    test "a leading or_where still filters what they patch and delete" do
+      query = from c in CardStack, or_where: c.id == "a"
+      assert write(:delete_all, query).body == %{"delete_by_filter" => ["id", "Eq", "a"]}
+
+      patch = write(:update_all, update(query, set: [title: "x"])).body["patch_by_filter"]
+      assert patch["filters"] == ["id", "Eq", "a"]
+    end
   end
 
   describe "document writes" do
-    setup do
-      {:ok, ns: TP.Namespace.new(CardStack)}
-    end
+    # Ecto's schema metadata for a write.
+    defp meta(schema, prefix \\ nil), do: %{schema: schema, source: schema.__schema__(:source), prefix: prefix}
 
-    test "upserts only insert new ids unless replacing every field", %{ns: ns} do
+    test "upserts only insert new ids unless replacing every field" do
       rows = [[id: "a", title: "T", vector: "AAAA"]]
 
-      assert [%Plan{kind: :write, namespace: "card_stacks", body: body}] =
-               Plan.upserts(ns, "card_stacks", rows, {:raise, [], []}, nil)
+      assert [%Plan{kind: :write, namespace: "staging-card_stacks", body: body}] =
+               Plan.upserts(meta(CardStack, "staging"), rows, {:raise, [], []}, nil)
 
       assert body == %{
-               "schema" => ns.schema,
+               "schema" => TP.Namespace.new(CardStack).schema,
                "distance_metric" => "cosine_distance",
                "upsert_rows" => [%{"id" => "a", "title" => "T", "vector" => "AAAA"}],
                "upsert_condition" => ["id", "Eq", nil],
                "return_affected_ids" => true
              }
 
-      [%{body: body}] = Plan.upserts(ns, "card_stacks", rows, {:nothing, [], []}, nil)
+      [%{body: body}] = Plan.upserts(meta(CardStack), rows, {:nothing, [], []}, nil)
       assert {body["upsert_condition"], body["return_affected_ids"]} == {["id", "Eq", nil], nil}
 
       all = CardStack.__schema__(:fields) -- [:id]
-      [%{body: body}] = Plan.upserts(ns, "card_stacks", rows, {all, [], []}, nil)
+      [%{body: body}] = Plan.upserts(meta(CardStack), rows, {all, [], []}, nil)
       refute Map.has_key?(body, "upsert_condition")
 
       assert_raise ArgumentError, ~r/must replace every field, e.g. :replace_all. It leaves out \["markdown"/, fn ->
-        Plan.upserts(ns, "card_stacks", rows, {[:title], [], []}, nil)
+        Plan.upserts(meta(CardStack), rows, {[:title], [], []}, nil)
       end
 
       assert_raise ArgumentError, ~r/can't run an update on conflict/, fn ->
-        Plan.upserts(ns, "card_stacks", rows, {%Ecto.Query{}, [], []}, nil)
+        Plan.upserts(meta(CardStack), rows, {%Ecto.Query{}, [], []}, nil)
+      end
+
+      assert_raise ArgumentError, ~r/turbopuffer writes need a schema/, fn ->
+        Plan.upserts(%{schema: nil, source: "card_stacks", prefix: nil}, rows, {:raise, [], []}, nil)
       end
     end
 
-    test "upserts go in batches of 1,000, or 30 with native embedding", %{ns: ns} do
+    test "upserts go in batches of 1,000, or 30 with native embedding" do
       rows = for i <- 1..1_001, do: [id: "#{i}", vector: "AAAA"]
-
-      assert ns |> Plan.upserts("n", rows, {:nothing, [], []}, nil) |> Enum.map(&length(&1.body["upsert_rows"])) == [
-               1_000,
-               1
-             ]
-
-      assert ns |> Plan.upserts("n", Enum.take(rows, 5), {:nothing, [], []}, 2) |> length() == 3
+      batches = Plan.upserts(meta(CardStack), rows, {:nothing, [], []}, nil)
+      assert Enum.map(batches, &length(&1.body["upsert_rows"])) == [1_000, 1]
+      assert length(Plan.upserts(meta(CardStack), Enum.take(rows, 5), {:nothing, [], []}, 2)) == 3
 
       lessons = for i <- 1..31, do: [id: "#{i}", markdown: "m"]
-      assert Lesson |> TP.Namespace.new() |> Plan.upserts("n", lessons, {:nothing, [], []}, nil) |> length() == 2
+      assert length(Plan.upserts(meta(Lesson), lessons, {:nothing, [], []}, nil)) == 2
+
+      assert_raise ArgumentError, ~r/:batch_size must be an integer above 0, got: 0/, fn ->
+        Plan.upserts(meta(CardStack), rows, {:nothing, [], []}, 0)
+      end
     end
 
-    test "update patches one document, checking any other filters", %{ns: ns} do
-      body = Plan.update(ns, "n", [title: "Decimals"], id: "a").body
+    test "update patches one document, checking any other filters" do
+      body = Plan.update(meta(CardStack), [title: "Decimals"], id: "a").body
       assert body["patch_rows"] == [%{"id" => "a", "title" => "Decimals"}]
-      assert body["schema"] == ns.schema
+      assert body["schema"] == TP.Namespace.new(CardStack).schema
       refute Map.has_key?(body, "patch_condition")
 
-      assert Plan.update(ns, "n", [title: "Decimals"], id: "a", position: 1).body["patch_condition"] ==
+      assert Plan.update(meta(CardStack), [title: "Decimals"], id: "a", position: 1).body["patch_condition"] ==
                ["position", "Eq", 1]
     end
 
     test "delete counts only a document that exists" do
-      assert Plan.delete("n", id: "a").body == %{"deletes" => ["a"], "delete_condition" => ["id", "NotEq", nil]}
+      assert Plan.delete(meta(CardStack), id: "a").body ==
+               %{"deletes" => ["a"], "delete_condition" => ["id", "NotEq", nil]}
 
-      assert Plan.delete("n", id: "a", position: 1).body["delete_condition"] ==
+      assert Plan.delete(meta(CardStack), id: "a", position: 1).body["delete_condition"] ==
                ["And", [["id", "NotEq", nil], ["position", "Eq", 1]]]
     end
   end

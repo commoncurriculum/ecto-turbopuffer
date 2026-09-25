@@ -1,6 +1,6 @@
 defmodule Ecto.Adapters.TurbopufferTest do
-  # Repos that never reach turbopuffer, so these run without an API key.
-  use ExUnit.Case, async: true
+  # Repos that never reach turbopuffer, so these run without an API key. Not async, because one test counts atoms.
+  use ExUnit.Case
 
   alias TP.Test.{CardStack, Repo}
 
@@ -13,15 +13,27 @@ defmodule Ecto.Adapters.TurbopufferTest do
 
   defp finch(repo), do: Ecto.Adapters.Turbopuffer.client(repo).finch_name
 
-  test "each repo runs its own Finch pool" do
+  test "a named repo runs its own Finch pool" do
     start_repo(name: __MODULE__.Named)
     assert finch(__MODULE__.Named) == __MODULE__.Named.Finch
     assert is_pid(Process.whereis(__MODULE__.Named.Finch))
+  end
 
-    anonymous = start_repo(name: nil)
-    other = start_repo(name: nil)
-    assert finch(anonymous) != finch(other)
-    assert is_pid(Process.whereis(finch(anonymous)))
+  test "repos started without a name share the driver's pool, so starting them creates no atoms" do
+    assert finch(start_repo(name: nil)) == Turbopuffer.Finch
+
+    atoms = :erlang.system_info(:atom_count)
+
+    for i <- 1..20 do
+      start_supervised!({Repo, name: nil, api_key: "unused"}, id: {:anonymous, i})
+      :ok = stop_supervised({:anonymous, i})
+    end
+
+    assert :erlang.system_info(:atom_count) - atoms < 20
+
+    assert_raise ArgumentError, ~r/shares the turbopuffer driver's pool, so it can't take :pools/, fn ->
+      Ecto.Adapters.Turbopuffer.init(repo: Repo, name: nil, telemetry_prefix: [:repo], pools: %{default: [size: 1]})
+    end
   end
 
   test "checks turbopuffer's limits before writing, and says which one" do

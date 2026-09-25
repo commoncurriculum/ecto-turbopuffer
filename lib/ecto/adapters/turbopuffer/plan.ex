@@ -10,8 +10,6 @@ defmodule Ecto.Adapters.Turbopuffer.Plan do
   @batch_size 1_000
   # turbopuffer's limit on documents per write for namespaces with native embedding.
   @embed_batch_size 30
-  @every_document ["id", "NotEq", nil]
-  @insert_only ["id", "Eq", nil]
 
   # `kind` is the request and how its response reads:
   #   * `:rows`, `:aggregate`, `:groups` - one query, whose rows `readers` read
@@ -51,7 +49,7 @@ defmodule Ecto.Adapters.Turbopuffer.Plan do
       Enum.flat_map(query.updates, fn %{expr: expr} ->
         Enum.flat_map(expr, fn
           {:set, sets} -> Enum.map(sets, fn {field, value} -> {field, Expr.value(ctx, value)} end)
-          {op, _} -> Expr.error!(ctx, "turbopuffer can only `set` fields in update_all, not #{op}")
+          {op, _} -> Expr.error!(query, "turbopuffer can only `set` fields in update_all, not #{op}")
         end)
       end)
 
@@ -61,26 +59,29 @@ defmodule Ecto.Adapters.Turbopuffer.Plan do
         namespace -> {TP.Namespace.write_params(namespace), TP.Namespace.patch!(namespace, fields)}
       end
 
-    body = Map.put(params, "patch_by_filter", %{"filters" => filters(ctx, @every_document), "patch" => patch})
-    %__MODULE__{kind: :write, namespace: ctx.name, body: body}
+    body = Map.put(params, "patch_by_filter", %{"filters" => filters(ctx, Expr.everything()), "patch" => patch})
+    %__MODULE__{kind: :write, namespace: name(query), body: body}
   end
 
   def delete_all(query, params) do
     ctx = context(query, params, :delete_all)
-    %__MODULE__{kind: :write, namespace: ctx.name, body: %{"delete_by_filter" => filters(ctx, @every_document)}}
+    %__MODULE__{kind: :write, namespace: name(query), body: %{"delete_by_filter" => filters(ctx, Expr.everything())}}
   end
 
   @doc """
-  Upserts rows of dumped fields in batches. `on_conflict: :raise` and `:nothing` only insert new ids, and
-  `:raise` has turbopuffer return the ids it wrote, so the adapter can name the ones it skipped.
+  Upserts rows of dumped fields in batches, given Ecto's schema metadata. `on_conflict: :raise` and `:nothing`
+  only insert new ids, and `:raise` has turbopuffer return the ids it wrote, so the adapter can name the ones it
+  skipped.
   """
-  def upserts(%TP.Namespace{} = namespace, name, rows, on_conflict, batch_size) do
+  def upserts(%{schema: schema} = schema_meta, rows, on_conflict, batch_size) do
+    namespace = TP.Namespace.new(schema || raise(ArgumentError, "turbopuffer writes need a schema for the types"))
     condition = upsert_condition!(namespace, on_conflict)
     params = TP.Namespace.write_params(namespace)
+    name = name(schema_meta)
 
     rows
     |> Enum.map(&TP.Namespace.row!(namespace, &1))
-    |> Enum.chunk_every(batch_size || if(namespace.embeds?, do: @embed_batch_size, else: @batch_size))
+    |> Enum.chunk_every(batch_size!(batch_size, namespace))
     |> Enum.map(fn batch ->
       body =
         params
@@ -93,7 +94,8 @@ defmodule Ecto.Adapters.Turbopuffer.Plan do
   end
 
   @doc "Patches one document's changed fields, given Ecto's filters: its id and any other fields to check."
-  def update(%TP.Namespace{} = namespace, name, fields, filters) do
+  def update(%{schema: schema} = schema_meta, fields, filters) do
+    namespace = TP.Namespace.new(schema)
     {id, condition} = id_and_condition(filters)
 
     body =
@@ -102,16 +104,16 @@ defmodule Ecto.Adapters.Turbopuffer.Plan do
       |> Map.put("patch_rows", [Map.put(TP.Namespace.patch!(namespace, fields), "id", id)])
       |> put("patch_condition", Expr.filter_json(condition, nil))
 
-    %__MODULE__{kind: :write, namespace: name, body: body}
+    %__MODULE__{kind: :write, namespace: name(schema_meta), body: body}
   end
 
   @doc """
   Deletes one document. The condition that it exists makes turbopuffer count a missing id as not deleted.
   """
-  def delete(name, filters) do
+  def delete(schema_meta, filters) do
     {id, condition} = id_and_condition(filters)
-    body = %{"deletes" => [id], "delete_condition" => Expr.junction(:and, @every_document, condition)}
-    %__MODULE__{kind: :write, namespace: name, body: body}
+    body = %{"deletes" => [id], "delete_condition" => Expr.junction(:and, Expr.everything(), condition)}
+    %__MODULE__{kind: :write, namespace: name(schema_meta), body: body}
   end
 
   @doc """
@@ -140,11 +142,8 @@ defmodule Ecto.Adapters.Turbopuffer.Plan do
   defp legs(query) do
     legs =
       Enum.flat_map(query.combinations, fn
-        {:union_all, leg} ->
-          legs(leg)
-
-        {kind, _leg} ->
-          Expr.error!(%{query: query}, "turbopuffer can only combine searches with union_all, not #{kind}")
+        {:union_all, leg} -> legs(leg)
+        {kind, _leg} -> Expr.error!(query, "turbopuffer can only combine searches with union_all, not #{kind}")
       end)
 
     [%{query | combinations: []} | legs]
@@ -155,19 +154,19 @@ defmodule Ecto.Adapters.Turbopuffer.Plan do
     if Enum.any?(query.select.fields, &aggregate?/1), do: aggregate(ctx), else: rows(ctx)
   end
 
-  defp rows(%{query: query} = ctx) do
+  defp rows(%Expr{query: query} = ctx) do
     {readers, include, compute} = select(ctx, query.select.fields)
     {rank_by, cursor} = Expr.rank_by(ctx)
     limit = if query.limit, do: limit(ctx)
     offset = if query.offset, do: Expr.value(ctx, query.offset.expr)
 
-    if message = window_error(limit, offset), do: Expr.error!(ctx, message)
+    if message = window_error(limit, offset), do: Expr.error!(query, message)
 
     # Without a limit, a query ordered by id reads every page after the last one's final id.
     cursor = if limit == nil and offset == nil, do: cursor
 
     if limit == nil and cursor == nil do
-      Expr.error!(ctx, "turbopuffer returns at most #{@max_limit} results per query, so add a limit")
+      Expr.error!(query, "turbopuffer returns at most #{@max_limit} results per query, so add a limit")
     end
 
     body =
@@ -177,20 +176,20 @@ defmodule Ecto.Adapters.Turbopuffer.Plan do
       |> put("include_attributes", if(include != [], do: include))
       |> put("compute_attributes", if(compute != %{}, do: compute))
 
-    %__MODULE__{kind: :rows, namespace: ctx.name, body: body, readers: readers, cursor: cursor}
+    %__MODULE__{kind: :rows, namespace: name(query), body: body, readers: readers, cursor: cursor}
   end
 
-  defp aggregate(%{query: query} = ctx) do
-    if query.order_bys != [], do: Expr.error!(ctx, "turbopuffer can't order aggregations")
-    if query.offset, do: Expr.error!(ctx, "turbopuffer can't offset aggregations")
+  defp aggregate(%Expr{query: query} = ctx) do
+    if query.order_bys != [], do: Expr.error!(query, "turbopuffer can't order aggregations")
+    if query.offset, do: Expr.error!(query, "turbopuffer can't offset aggregations")
 
     group_by = for %{expr: exprs} <- query.group_bys, expr <- exprs, do: Expr.name!(ctx, expr, :filter)
     limit = if query.limit, do: limit(ctx)
 
-    if message = window_error(limit, nil), do: Expr.error!(ctx, message)
+    if message = window_error(limit, nil), do: Expr.error!(query, message)
 
     if group_by != [] and limit == nil do
-      Expr.error!(ctx, "turbopuffer returns at most #{@max_limit} groups, so add a limit")
+      Expr.error!(query, "turbopuffer returns at most #{@max_limit} groups, so add a limit")
     end
 
     {readers, aggregates} =
@@ -200,15 +199,14 @@ defmodule Ecto.Adapters.Turbopuffer.Plan do
         cond do
           aggregate?(field) ->
             label = "ecto_#{index}"
-            aggregate = aggregate!(ctx, field)
-            # A namespace with no documents counts 0 and sums nothing.
-            {{:key, label, if(aggregate == ["Count"], do: 0)}, Map.put(aggregates, label, aggregate)}
+            {aggregate, empty} = aggregate!(ctx, field)
+            {{:key, label, empty}, Map.put(aggregates, label, aggregate)}
 
           Expr.field?(field) and Expr.name!(ctx, field, nil) in group_by ->
             {{:key, Expr.name!(ctx, field, nil), nil}, aggregates}
 
           true ->
-            Expr.error!(ctx, "select only aggregates and group_by fields in a turbopuffer aggregation")
+            Expr.error!(query, "select only aggregates and group_by fields in a turbopuffer aggregation")
         end
       end)
 
@@ -220,28 +218,26 @@ defmodule Ecto.Adapters.Turbopuffer.Plan do
       |> put("top_k", if(group_by != [], do: limit))
 
     kind = if group_by == [], do: :aggregate, else: :groups
-    %__MODULE__{kind: kind, namespace: ctx.name, body: body, readers: readers}
+    %__MODULE__{kind: kind, namespace: name(query), body: body, readers: readers}
   end
 
   defp multi(query, legs, rerank_by) do
-    ctx = %{query: query}
-
     for leg <- legs do
       cond do
-        leg.kind != :rows -> Expr.error!(ctx, "turbopuffer can't combine aggregations with union_all")
-        leg.cursor -> Expr.error!(ctx, "each search in a union_all needs a limit")
+        leg.kind != :rows -> Expr.error!(query, "turbopuffer can't combine aggregations with union_all")
+        leg.cursor -> Expr.error!(query, "each search in a union_all needs a limit")
         true -> :ok
       end
     end
 
     if length(legs) > @max_queries do
-      Expr.error!(ctx, "turbopuffer runs at most #{@max_queries} queries in a union_all")
+      Expr.error!(query, "turbopuffer runs at most #{@max_queries} queries in a union_all")
     end
 
     namespace =
       case legs |> Enum.map(& &1.namespace) |> Enum.uniq() do
         [namespace] -> namespace
-        namespaces -> Expr.error!(ctx, "a union_all runs against one namespace, not #{Enum.join(namespaces, ", ")}")
+        namespaces -> Expr.error!(query, "a union_all runs against one namespace, not #{Enum.join(namespaces, ", ")}")
       end
 
     body = Map.merge(%{"queries" => Enum.map(legs, & &1.body)}, rerank(rerank_by, length(legs)))
@@ -250,7 +246,7 @@ defmodule Ecto.Adapters.Turbopuffer.Plan do
       [%{readers: readers} | _] = legs
 
       unless Enum.all?(legs, &(&1.readers == readers)) do
-        Expr.error!(ctx, "rerank_by fuses the searches into one list of rows, so they must select the same fields")
+        Expr.error!(query, "rerank_by fuses the searches into one list of rows, so they must select the same fields")
       end
 
       %__MODULE__{kind: :fused, namespace: namespace, body: body, readers: readers, legs: legs}
@@ -262,16 +258,26 @@ defmodule Ecto.Adapters.Turbopuffer.Plan do
   defp rerank(nil, _count), do: %{}
   defp rerank(:rrf, count), do: rerank({:rrf, []}, count)
 
+  # turbopuffer takes one weight above 0 per query, and a rank constant that's an integer above 0.
   defp rerank({:rrf, opts}, count) when is_list(opts) do
     opts = Keyword.validate!(opts, [:rank_constant, :weights, :limit, :offset])
+    weights = opts[:weights]
+    rank_constant = opts[:rank_constant]
 
-    if weights = opts[:weights] do
-      unless is_list(weights) and length(weights) == count do
-        raise ArgumentError, "rerank_by needs one weight for each of the #{count} searches, got: #{inspect(weights)}"
-      end
+    cond do
+      weights != nil and not (is_list(weights) and length(weights) == count and Enum.all?(weights, &positive?/1)) ->
+        raise ArgumentError,
+              "rerank_by needs a weight above 0 for each of the #{count} searches, got: #{inspect(weights)}"
+
+      rank_constant != nil and not (is_integer(rank_constant) and rank_constant > 0) ->
+        raise ArgumentError, "rerank_by's rank_constant must be an integer above 0, got: #{inspect(rank_constant)}"
+
+      message = window_error(opts[:limit], opts[:offset]) ->
+        raise ArgumentError, "rerank_by: " <> message
+
+      true ->
+        :ok
     end
-
-    if message = window_error(opts[:limit], opts[:offset]), do: raise(ArgumentError, "rerank_by: " <> message)
 
     params = for {key, value} <- opts, key in [:rank_constant, :weights], into: %{}, do: {Atom.to_string(key), value}
 
@@ -284,6 +290,8 @@ defmodule Ecto.Adapters.Turbopuffer.Plan do
     raise ArgumentError, "unknown :rerank_by #{inspect(other)}, expected :rrf or {:rrf, opts}"
   end
 
+  defp positive?(number), do: is_number(number) and number > 0
+
   defp consistency(nil), do: nil
   defp consistency(level) when level in [:strong, :eventual], do: %{"level" => Atom.to_string(level)}
 
@@ -292,46 +300,53 @@ defmodule Ecto.Adapters.Turbopuffer.Plan do
   end
 
   defp context(query, params, operation) do
-    ctx = %{query: query, params: params}
-    check!(ctx, operation)
-    {source, schema, prefix} = elem(query.sources, 0)
-    Map.merge(ctx, %{namespace: schema && TP.Namespace.new(schema), name: TP.Namespace.name!(source, prefix)})
+    check!(query, operation)
+    {_source, schema, _prefix} = elem(query.sources, 0)
+    %Expr{query: query, params: params, namespace: schema && TP.Namespace.new(schema)}
   end
 
-  defp check!(%{query: query} = ctx, operation) do
+  # The namespace a query or a write's schema metadata reads and writes.
+  defp name(%Ecto.Query{sources: sources}) do
+    {source, _schema, prefix} = elem(sources, 0)
+    TP.Namespace.name!(source, prefix)
+  end
+
+  defp name(%{source: source, prefix: prefix}), do: TP.Namespace.name!(source, prefix)
+
+  defp check!(query, operation) do
     cond do
       query.joins != [] ->
-        Expr.error!(ctx, "turbopuffer has no joins")
+        Expr.error!(query, "turbopuffer has no joins")
 
       query.distinct ->
-        Expr.error!(ctx, "turbopuffer has no distinct")
+        Expr.error!(query, "turbopuffer has no distinct")
 
       query.havings != [] ->
-        Expr.error!(ctx, "turbopuffer has no having")
+        Expr.error!(query, "turbopuffer has no having")
 
       query.windows != [] ->
-        Expr.error!(ctx, "turbopuffer has no windows")
+        Expr.error!(query, "turbopuffer has no windows")
 
       query.lock ->
-        Expr.error!(ctx, "turbopuffer has no locks")
+        Expr.error!(query, "turbopuffer has no locks")
 
       query.with_ctes ->
-        Expr.error!(ctx, "turbopuffer has no CTEs")
+        Expr.error!(query, "turbopuffer has no CTEs")
 
       not match?({source, _} when is_binary(source), query.from.source) ->
-        Expr.error!(ctx, "turbopuffer has no subqueries")
+        Expr.error!(query, "turbopuffer has no subqueries")
 
       operation != :all and query.order_bys != [] ->
-        Expr.error!(ctx, "#{operation} can't be ordered")
+        Expr.error!(query, "#{operation} can't be ordered")
 
       operation != :all and (query.limit || query.offset) ->
-        Expr.error!(ctx, "#{operation} can't take a limit")
+        Expr.error!(query, "#{operation} can't take a limit")
 
       operation != :all and query.select ->
-        Expr.error!(ctx, "turbopuffer's #{operation} can't return rows")
+        Expr.error!(query, "turbopuffer's #{operation} can't return rows")
 
       operation == :all and query.group_bys != [] and not Enum.any?(query.select.fields, &aggregate?/1) ->
-        Expr.error!(ctx, "group_by needs an aggregate")
+        Expr.error!(query, "group_by needs an aggregate")
 
       true ->
         :ok
@@ -340,8 +355,10 @@ defmodule Ecto.Adapters.Turbopuffer.Plan do
 
   defp filters(ctx, every), do: ctx |> Expr.filters() |> Expr.filter_json(every)
 
-  defp limit(%{query: %{limit: %{with_ties: true}}} = ctx), do: Expr.error!(ctx, "turbopuffer has no limits with ties")
-  defp limit(%{query: %{limit: %{expr: expr}}} = ctx), do: Expr.value(ctx, expr)
+  defp limit(%Expr{query: %{limit: %{with_ties: true}} = query}),
+    do: Expr.error!(query, "turbopuffer has no limits with ties")
+
+  defp limit(%Expr{query: %{limit: %{expr: expr}}} = ctx), do: Expr.value(ctx, expr)
 
   # turbopuffer returns at most 10,000 rows per query, however they're paged with offset.
   defp window_error(limit, offset) do
@@ -390,17 +407,18 @@ defmodule Ecto.Adapters.Turbopuffer.Plan do
   defp aggregate?({agg, _, _}) when agg in [:count, :sum, :avg, :min, :max], do: true
   defp aggregate?(_field), do: false
 
-  defp aggregate!(_ctx, {:count, _, []}), do: ["Count"]
+  # An aggregation, and what it reads as over a namespace with no documents.
+  defp aggregate!(_ctx, {:count, _, []}), do: {["Count"], 0}
 
   defp aggregate!(ctx, {:count, _, [field]} = expr) do
     if Expr.field?(field) and Expr.name!(ctx, field, nil) == "id" do
-      ["Count"]
+      {["Count"], 0}
     else
       Expr.error!(ctx, "turbopuffer counts documents, so use count() instead of #{Macro.to_string(expr)}")
     end
   end
 
-  defp aggregate!(ctx, {:sum, _, [field]}), do: ["Sum", Expr.name!(ctx, field, nil)]
+  defp aggregate!(ctx, {:sum, _, [field]}), do: {["Sum", Expr.name!(ctx, field, nil)], nil}
   defp aggregate!(ctx, expr), do: Expr.error!(ctx, "turbopuffer can't aggregate #{Macro.to_string(expr)}")
 
   defp response_rows(:rows, %{"rows" => rows}), do: rows
@@ -428,7 +446,14 @@ defmodule Ecto.Adapters.Turbopuffer.Plan do
   # writes
   # ------------------------------------------------------------------------------------------------
 
-  defp upsert_condition!(_namespace, {mode, _, _}) when mode in [:raise, :nothing], do: @insert_only
+  defp batch_size!(nil, namespace), do: if(namespace.embeds?, do: @embed_batch_size, else: @batch_size)
+  defp batch_size!(size, _namespace) when is_integer(size) and size > 0, do: size
+
+  defp batch_size!(size, _namespace) do
+    raise ArgumentError, ":batch_size must be an integer above 0, got: #{inspect(size)}"
+  end
+
+  defp upsert_condition!(_namespace, {mode, _, _}) when mode in [:raise, :nothing], do: Expr.nothing()
 
   defp upsert_condition!(namespace, {fields, _, _}) when is_list(fields) do
     replaced = Enum.map(fields, &Atom.to_string/1)

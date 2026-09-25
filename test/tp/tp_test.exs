@@ -131,6 +131,7 @@ defmodule TPTest do
             {:score, 0.5, 0.5},
             {:is_public, false, false},
             {:owner_uuid, "769c134d-07b8-4225-954a-b6cc5ffc320c", "769c134d-07b8-4225-954a-b6cc5ffc320c"},
+            {:owner_uuid, "769C134D-07B8-4225-954A-B6CC5FFC320C", "769c134d-07b8-4225-954a-b6cc5ffc320c"},
             {:updated_at, ~U[2026-09-24 12:34:56.123456Z], "2026-09-24T12:34:56.123Z"},
             {:dates, [~U[2026-09-01 00:00:00.000Z]], ["2026-09-01T00:00:00.000Z"]},
             {:thumbnail, <<0, 1, 255>>, "AAH/"},
@@ -150,7 +151,8 @@ defmodule TPTest do
       for {field, value} <- [
             position: "7",
             views: -1,
-            owner_uuid: "769C134D-07B8-4225-954A-B6CC5FFC320C",
+            owner_uuid: "not-a-uuid",
+            owner_uuid: <<0::128>>,
             updated_at: ~N[2026-09-24 08:00:00],
             updated_at: "2026-09-24",
             dates: [~U[2026-09-01 00:00:00Z], nil],
@@ -177,8 +179,9 @@ defmodule TPTest do
             {:thumbnail, "AAH/", <<0, 1, 255>>},
             {:embedding, f32_base64([0.25, -0.5, 1.0]), [0.25, -0.5, 1.0]},
             {:embedding, [0.25, -0.5, 1.0], [0.25, -0.5, 1.0]},
-            {:half_embedding, "ADgAPQ==", [0.5, 1.25]},
-            {:small_embedding, "/Qc=", [-3, 7]},
+            # base64 vectors are f32, whatever the element type.
+            {:half_embedding, f32_base64([0.5, 1.25]), [0.5, 1.25]},
+            {:small_embedding, f32_base64([-3, 7]), [-3, 7]},
             {:small_embedding, [-128.0, 127.0], [-128, 127]},
             {:token_vectors, [[0.5, 0.25]], [[0.5, 0.25]]},
             {:sparse, %{"fraction" => 0.5}, %{"fraction" => 0.5}},
@@ -191,6 +194,8 @@ defmodule TPTest do
     test "rejects values that don't fit the schema" do
       assert load(:thumbnail, "not base64!") == :error
       assert load(:embedding, f32_base64([1.0, 2.0])) == :error
+      assert load(:half_embedding, f32_base64([70_000.0, 0.0])) == :error
+      assert load(:small_embedding, f32_base64([1.5, 0.0])) == :error
     end
   end
 

@@ -179,29 +179,27 @@ defmodule TP.Namespace do
   end
 
   # An embed that names its vector attribute has to name a declared vector it fits, so that queries can read it.
-  defp validate_embed_target!(%{embed: embed, options: %{embed: config}} = attribute, ns) when is_map(config) do
-    where = "(field #{inspect(attribute.field)} in #{inspect(ns.module)})"
+  defp validate_embed_target!(%{embed: %{explicit_target?: false}}, _ns), do: :ok
 
-    case {config["attribute"], ns.by_name[embed.target]} do
-      {nil, _} ->
-        :ok
+  defp validate_embed_target!(%{embed: embed} = attribute, ns) do
+    where = "#{inspect(ns.module)}.#{attribute.field}"
 
-      {_, %{type: {:vector, dims, element}}} ->
+    case ns.by_name[embed.target] do
+      %{type: {:vector, dims, element}} ->
         if embed.dims not in [nil, dims] do
-          raise ArgumentError, "embed dims #{embed.dims} don't match #{embed.target}'s #{dims} dimensions #{where}"
+          raise ArgumentError, "#{where}: embed dims #{embed.dims} don't match #{embed.target}'s #{dims} dimensions"
         end
 
         if embed.dtype not in [nil, Atom.to_string(element)] do
-          raise ArgumentError, "embed dtype #{embed.dtype} doesn't match #{embed.target}'s #{element} elements #{where}"
+          raise ArgumentError,
+                "#{where}: embed dtype #{embed.dtype} doesn't match #{embed.target}'s #{element} elements"
         end
 
       _ ->
         raise ArgumentError,
-              "embed attribute #{inspect(embed.target)} must be an [N] vector field in the schema #{where}"
+              "#{where}: embed attribute #{inspect(embed.target)} must be an [N] vector field in the schema"
     end
   end
-
-  defp validate_embed_target!(_attribute, _ns), do: :ok
 
   # A vector that native embedding fills from a string attribute can be left out when that string is present.
   defp require_embedded!(ns, attribute, row) do

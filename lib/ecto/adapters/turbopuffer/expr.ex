@@ -1,33 +1,34 @@
 defmodule Ecto.Adapters.Turbopuffer.Expr do
   @moduledoc false
   # Compiles a planned query's expressions into turbopuffer's JSON: filters, rank_by scores, and values
-  # (docs/turbopuffer/query.md). `ctx` is Plan's: the query, its params, and its TP.Namespace (nil when schemaless).
+  # (docs/turbopuffer/query.md). The struct is the context: the query, its params, and its TP.Namespace, which is
+  # nil when the query is schemaless.
 
   alias Ecto.Query.Tagged
 
-  # A filter no document matches, since ids can't be null.
-  @nothing ["id", "Eq", nil]
+  @enforce_keys [:query, :params]
+  defstruct [:query, :params, :namespace]
 
-  # turbopuffer requires max_edit_distance, and each step's min_query_chars must be at least 3 * (distance + 1).
-  @fuzzy_options %{
-    "max_edit_distance" => [
-      %{"min_query_chars" => 3, "distance" => 0},
-      %{"min_query_chars" => 6, "distance" => 1},
-      %{"min_query_chars" => 9, "distance" => 2}
-    ]
-  }
+  # ids can't be null, so no document matches this, and as a write condition it only matches ids not written yet.
+  @nothing ["id", "Eq", nil]
+  @everything ["id", "NotEq", nil]
 
   @operators %{:== => "Eq", :!= => "NotEq", :< => "Lt", :<= => "Lte", :> => "Gt", :>= => "Gte"}
   @negated %{:== => :!=, :!= => :==, :< => :>=, :<= => :>, :> => :<=, :>= => :<}
   @flipped %{:== => :==, :!= => :!=, :< => :>, :<= => :>=, :> => :<, :>= => :<=}
 
+  def nothing, do: @nothing
+  def everything, do: @everything
+
   @doc """
-  The query's wheres as one filter, or `true` or `false` when they're constant.
+  The query's wheres as one filter, or `true` or `false` when they're constant. The first where's `or` has
+  nothing to join, as in `from c in CardStack, or_where: c.id == ^id`.
   """
-  def filters(%{query: %{wheres: wheres}} = ctx) do
-    Enum.reduce(wheres, true, fn
-      %{op: :and, expr: expr}, acc -> junction(:and, acc, filter(ctx, expr, false))
-      %{op: :or, expr: expr}, acc -> junction(:or, acc, filter(ctx, expr, false))
+  def filters(%__MODULE__{query: %{wheres: []}}), do: true
+
+  def filters(%__MODULE__{query: %{wheres: [first | rest]}} = ctx) do
+    Enum.reduce(rest, filter(ctx, first.expr, false), fn %{op: op, expr: expr}, acc ->
+      junction(op, acc, filter(ctx, expr, false))
     end)
   end
 
@@ -51,7 +52,7 @@ defmodule Ecto.Adapters.Turbopuffer.Expr do
   @doc """
   The query's order_bys as turbopuffer's rank_by, and the direction a cursor pages in when it orders by id alone.
   """
-  def rank_by(%{query: %{order_bys: order_bys}} = ctx) do
+  def rank_by(%__MODULE__{query: %{order_bys: order_bys}} = ctx) do
     case Enum.flat_map(order_bys, & &1.expr) do
       [] ->
         {["id", "asc"], :asc}
@@ -92,19 +93,10 @@ defmodule Ecto.Adapters.Turbopuffer.Expr do
         {:literal, value(ctx, expr)}
 
       true ->
-        # compute_attributes takes BM25 and VectorDist, not the other scores.
         case operator(ctx, expr) do
-          {%{role: :dist}, []} ->
-            :dist
-
-          {%{op: "BM25"} = op, args} ->
-            {:compute, elem(score_call(ctx, op, args), 0)}
-
-          {%{role: :compute} = op, [field, vector]} ->
-            {:compute, [name!(ctx, field, op.needs), op.op, vector!(ctx, vector)]}
-
-          _ ->
-            error!(ctx, "turbopuffer can't select #{Macro.to_string(expr)}")
+          {%{role: :dist}, []} -> :dist
+          {%{select: true} = op, args} -> {:compute, call(ctx, op, args)}
+          _ -> error!(ctx, "turbopuffer can't select #{Macro.to_string(expr)}")
         end
     end
   end
@@ -145,7 +137,9 @@ defmodule Ecto.Adapters.Turbopuffer.Expr do
 
   def value(ctx, expr), do: error!(ctx, "turbopuffer can't use #{Macro.to_string(expr)} as a value")
 
-  def error!(%{query: query}, message), do: raise(Ecto.QueryError, query: query, message: message)
+  @doc "Raises an `Ecto.QueryError` for the query, or the query of a context."
+  def error!(%__MODULE__{query: query}, message), do: error!(query, message)
+  def error!(%Ecto.Query{} = query, message), do: raise(Ecto.QueryError, query: query, message: message)
 
   # ------------------------------------------------------------------------------------------------
   # filters
@@ -197,21 +191,13 @@ defmodule Ecto.Adapters.Turbopuffer.Expr do
         other -> error!(ctx, "turbopuffer can't filter by #{inspect(other)}")
       end
     else
-      filter = operator_filter(ctx, expr)
+      filter =
+        case operator(ctx, expr) do
+          {%{role: :filter} = op, args} -> call(ctx, op, args)
+          _ -> error!(ctx, "turbopuffer can't filter by #{Macro.to_string(expr)}")
+        end
+
       if negate, do: ["Not", filter], else: filter
-    end
-  end
-
-  defp operator_filter(ctx, expr) do
-    case operator(ctx, expr) do
-      {%{role: :filter, op: "Fuzzy"} = op, [field, text]} ->
-        [name!(ctx, field, op.needs), op.op, value(ctx, text), @fuzzy_options]
-
-      {%{role: :filter} = op, [field, value | options]} ->
-        [name!(ctx, field, op.needs), op.op, value(ctx, value) | Enum.map(options, &value(ctx, &1))]
-
-      _ ->
-        error!(ctx, "turbopuffer can't filter by #{Macro.to_string(expr)}")
     end
   end
 
@@ -281,21 +267,9 @@ defmodule Ecto.Adapters.Turbopuffer.Expr do
   defp score(ctx, expr) do
     case operator(ctx, expr) do
       {%{role: :max}, [left, right]} -> combine_scores(ctx, "Max", left, right)
-      {%{role: {:score, _}} = op, args} -> score_call(ctx, op, args)
+      {%{role: {:score, direction}} = op, args} -> {call(ctx, op, args), direction}
       _ -> error!(ctx, "turbopuffer can't rank by #{Macro.to_string(expr)}")
     end
-  end
-
-  defp score_call(ctx, %{op: op, role: {:score, direction}} = operator, [field, query | options])
-       when op in ["ANN", "kNN"] do
-    query = vector!(ctx, query)
-    needs = if match?(["Embed" | _], query), do: :embed, else: operator.needs
-    {[name!(ctx, field, needs), op, query | Enum.map(options, &value(ctx, &1))], direction}
-  end
-
-  defp score_call(ctx, %{role: {:score, direction}} = operator, [field, query | options]) do
-    {[name!(ctx, field, operator.needs), operator.op, value(ctx, query) | Enum.map(options, &value(ctx, &1))],
-     direction}
   end
 
   defp combine_scores(ctx, op, left, right) do
@@ -308,19 +282,27 @@ defmodule Ecto.Adapters.Turbopuffer.Expr do
     end
   end
 
-  # A vector query: a literal vector, or `embed(text)` for turbopuffer to embed.
-  defp vector!(ctx, expr) do
-    case operator(ctx, expr) do
-      {%{role: :embed}, [text]} -> ["Embed", value(ctx, text)]
-      {%{role: :embed}, [text, model]} -> ["Embed", value(ctx, text), %{"model" => value(ctx, model)}]
-      nil -> value(ctx, expr)
-      _ -> error!(ctx, "expected a vector or embed(text), got: #{Macro.to_string(expr)}")
-    end
-  end
-
   # ------------------------------------------------------------------------------------------------
   # helpers
   # ------------------------------------------------------------------------------------------------
+
+  # An operator on a field, like ["title", "Fuzzy", "text", options].
+  defp call(ctx, op, [field, query | options]) do
+    {query, needs} = if op.vector_query, do: vector_query(ctx, op, query), else: {value(ctx, query), op.needs}
+    options = if options == [] and op.defaults, do: [op.defaults], else: Enum.map(options, &value(ctx, &1))
+    [name!(ctx, field, needs), op.op, query | options]
+  end
+
+  # A literal vector, or `embed(text)` for turbopuffer to embed, which needs an embedded attribute, or a model to
+  # rank a vector attribute.
+  defp vector_query(ctx, op, expr) do
+    case operator(ctx, expr) do
+      nil -> {value(ctx, expr), op.needs}
+      {%{role: :embed}, [text]} -> {["Embed", value(ctx, text)], :embed}
+      {%{role: :embed}, [text, model]} -> {["Embed", value(ctx, text), %{"model" => value(ctx, model)}], :embed_model}
+      _ -> error!(ctx, "expected a vector or embed(text), got: #{Macro.to_string(expr)}")
+    end
+  end
 
   # A TP.Query operator and its arguments, or nil when the expression isn't a keyword fragment.
   defp operator(ctx, {:fragment, _, [[{key, args}]]} = expr) when is_atom(key) and is_list(args) do

@@ -13,9 +13,10 @@ defmodule Ecto.Adapters.Turbopuffer do
 
   Requests go through the `turbopuffer` driver, so the repo also takes `Turbopuffer.Client.new/1`'s `:base_url`,
   `:max_retries` and `:retry_delay`. `:receive_timeout` sets how long to wait for a response, 60 seconds by
-  default. Each repo has its own Finch connection pool, which `:pools` configures with Finch's `:pools` option
-  (`%{default: [size: 10, count: 2]}` by default). For calls outside Ecto, `client/1` returns the repo's
-  `Turbopuffer.Client`. A failed request raises `TP.Error`.
+  default. Each named repo has its own Finch connection pool, which `:pools` configures with Finch's `:pools`
+  option (`%{default: [size: 10, count: 2]}` by default). Repos started with `name: nil`, like dynamic repos, share
+  the driver's pool. For calls outside Ecto, `client/1` returns the repo's `Turbopuffer.Client`. A failed request
+  raises `TP.Error`.
 
   ## Namespaces
 
@@ -97,7 +98,7 @@ defmodule Ecto.Adapters.Turbopuffer do
   @impl Ecto.Adapter
   def init(config) do
     repo = Keyword.fetch!(config, :repo)
-    finch = finch_name(repo, Keyword.get(config, :name, repo))
+    {finch, child} = pool(repo, Keyword.get(config, :name, repo), config)
 
     meta = %{
       client: config |> Keyword.take(@client_options) |> Keyword.put(:finch_name, finch) |> Turbopuffer.Client.new(),
@@ -105,7 +106,7 @@ defmodule Ecto.Adapters.Turbopuffer do
       telemetry: {repo, Keyword.fetch!(config, :telemetry_prefix) ++ [:query]}
     }
 
-    {:ok, Finch.child_spec(name: finch, pools: Keyword.get(config, :pools, @pools)), meta}
+    {:ok, child, meta}
   end
 
   @impl Ecto.Adapter
@@ -134,7 +135,7 @@ defmodule Ecto.Adapters.Turbopuffer do
   @impl Ecto.Adapter.Schema
   def insert(meta, schema_meta, fields, on_conflict, returning, opts) do
     no_returning!(returning)
-    [plan] = Plan.upserts(TP.Namespace.new(schema_meta.schema), namespace_of(schema_meta), [fields], on_conflict, nil)
+    [plan] = Plan.upserts(schema_meta, [fields], on_conflict, nil)
 
     case write!(meta, plan, opts) do
       %{"rows_affected" => 1} -> {:ok, []}
@@ -146,20 +147,15 @@ defmodule Ecto.Adapters.Turbopuffer do
   @impl Ecto.Adapter.Schema
   def insert_all(meta, schema_meta, _header, rows, on_conflict, returning, placeholders, opts) do
     no_returning!(returning)
-
-    schema =
-      schema_meta.schema || raise ArgumentError, "turbopuffer's insert_all needs a schema to know the namespace's types"
-
     rows = Enum.map(rows, fn fields -> Enum.map(fields, &resolve_placeholder(&1, placeholders)) end)
-    name = namespace_of(schema_meta)
-    plans = Plan.upserts(TP.Namespace.new(schema), name, rows, on_conflict, opts[:batch_size])
+    plans = Plan.upserts(schema_meta, rows, on_conflict, opts[:batch_size])
     responses = Enum.map(plans, &write!(meta, &1, opts))
     count = responses |> Enum.map(& &1["rows_affected"]) |> Enum.sum()
 
     if elem(on_conflict, 0) == :raise and count < length(rows) do
       written = MapSet.new(Enum.flat_map(responses, &Map.get(&1, "upserted_ids", [])))
       ids = for plan <- plans, %{"id" => id} <- plan.body["upsert_rows"], id not in written, do: id
-      raise TP.ConflictError, namespace: name, ids: ids, count: length(rows)
+      raise TP.ConflictError, namespace: hd(plans).namespace, ids: ids, count: length(rows)
     end
 
     {count, nil}
@@ -168,14 +164,14 @@ defmodule Ecto.Adapters.Turbopuffer do
   @impl Ecto.Adapter.Schema
   def update(meta, schema_meta, fields, filters, returning, opts) do
     no_returning!(returning)
-    plan = Plan.update(TP.Namespace.new(schema_meta.schema), namespace_of(schema_meta), fields, filters)
+    plan = Plan.update(schema_meta, fields, filters)
     if write!(meta, plan, opts)["rows_affected"] == 1, do: {:ok, []}, else: {:error, :stale}
   end
 
   @impl Ecto.Adapter.Schema
   def delete(meta, schema_meta, filters, returning, opts) do
     no_returning!(returning)
-    plan = Plan.delete(namespace_of(schema_meta), filters)
+    plan = Plan.delete(schema_meta, filters)
     if write!(meta, plan, opts)["rows_affected"] == 1, do: {:ok, []}, else: {:error, :stale}
   end
 
@@ -209,9 +205,21 @@ defmodule Ecto.Adapters.Turbopuffer do
   # PRIVATE
   # ------------------------------------------------------------------------------------------------
 
-  # Finch names its pool's processes after an atom, so a repo started without a name gets a unique one.
-  defp finch_name(_repo, name) when is_atom(name) and name != nil, do: Module.concat(name, Finch)
-  defp finch_name(repo, _name), do: Module.concat([repo, Finch, "Anonymous#{System.unique_integer([:positive])}"])
+  # Finch names a pool's processes after atoms, so a repo started without a name shares the driver's pool rather
+  # than creating atoms each time one starts. Ecto still needs a child to supervise, so it gets an empty supervisor.
+  defp pool(_repo, name, config) when is_atom(name) and name != nil do
+    finch = Module.concat(name, Finch)
+    {finch, Finch.child_spec(name: finch, pools: Keyword.get(config, :pools, @pools))}
+  end
+
+  defp pool(repo, _name, config) do
+    if Keyword.has_key?(config, :pools) do
+      raise ArgumentError, "a repo started without a name shares the turbopuffer driver's pool, so it can't take :pools"
+    end
+
+    {Turbopuffer.Finch,
+     %{id: {__MODULE__, repo}, start: {Supervisor, :start_link, [[], [strategy: :one_for_one]]}, type: :supervisor}}
+  end
 
   defp pages(plan, meta, opts) do
     Stream.unfold(plan.body, fn
@@ -250,8 +258,6 @@ defmodule Ecto.Adapters.Turbopuffer do
   defp no_returning!(fields) do
     raise ArgumentError, "turbopuffer writes can't return fields, got: #{inspect(fields)}"
   end
-
-  defp namespace_of(%{source: source, prefix: prefix}), do: TP.Namespace.name!(source, prefix)
 
   defp request(%{client: client, telemetry: {repo, event}} = meta, plan, opts) do
     {kind, path} =

@@ -216,12 +216,8 @@ defmodule TP do
   defp encode(float, :float) when is_number(float), do: {:ok, float / 1}
   defp encode(bool, :bool) when is_boolean(bool), do: {:ok, bool}
 
-  defp encode(uuid, :uuid) when is_binary(uuid) do
-    case Ecto.UUID.cast(uuid) do
-      {:ok, ^uuid} -> {:ok, uuid}
-      _ -> :error
-    end
-  end
+  # Ecto.UUID.cast also takes 16 raw bytes, which aren't a uuid string.
+  defp encode(uuid, :uuid) when is_binary(uuid) and byte_size(uuid) == 36, do: Ecto.UUID.cast(uuid)
 
   defp encode(%DateTime{time_zone: "Etc/UTC"} = datetime, :datetime) do
     {:ok, datetime |> DateTime.truncate(:millisecond) |> DateTime.to_iso8601()}
@@ -255,13 +251,15 @@ defmodule TP do
 
   defp load_value(base64, :bytes) when is_binary(base64), do: Base.decode64(base64)
 
-  # Unlike writes, base64 vectors in query responses use the schema's element type.
-  defp load_value(base64, {:vector, dims, element} = type) when is_binary(base64) do
-    with {:ok, binary} <- Base.decode64(base64),
-         true <- byte_size(binary) == dims * element_bytes(element) do
-      vector(decode_elements(binary, element), type)
-    else
-      _ -> :error
+  # Like writes, base64 vectors in responses are little-endian f32 whatever the element type (query.md,
+  # vector_encoding).
+  defp load_value(base64, {:vector, dims, _element} = type) when is_binary(base64) do
+    case Base.decode64(base64) do
+      {:ok, binary} when byte_size(binary) == dims * 4 ->
+        load_value(for(<<value::float-32-little <- binary>>, do: value), type)
+
+      _ ->
+        :error
     end
   end
 
@@ -279,12 +277,4 @@ defmodule TP do
   end
 
   defp load_value(value, type), do: cast_value(value, type)
-
-  defp element_bytes(:f32), do: 4
-  defp element_bytes(:f16), do: 2
-  defp element_bytes(:i8), do: 1
-
-  defp decode_elements(binary, :f32), do: for(<<value::float-32-little <- binary>>, do: value)
-  defp decode_elements(binary, :f16), do: for(<<value::float-16-little <- binary>>, do: value)
-  defp decode_elements(binary, :i8), do: for(<<value::signed-8 <- binary>>, do: value)
 end

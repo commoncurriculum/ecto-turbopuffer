@@ -105,11 +105,16 @@ defmodule TP.AttributeTest do
     end
 
     test "resolves native embedding's model and target vector" do
-      assert attribute("string", field: :body, embed: "openai/text-embedding-3-small").embed ==
-               %{model: "openai/text-embedding-3-small", target: "embed_body", dims: nil, dtype: nil}
+      assert attribute("string", field: :body, embed: "openai/text-embedding-3-small").embed == %{
+               model: "openai/text-embedding-3-small",
+               target: "embed_body",
+               explicit_target?: false,
+               dims: nil,
+               dtype: nil
+             }
 
       assert attribute("string", embed: [model: "m", attribute: "body_vector", dims: 512, dtype: :f16]).embed ==
-               %{model: "m", target: "body_vector", dims: 512, dtype: "f16"}
+               %{model: "m", target: "body_vector", explicit_target?: true, dims: 512, dtype: "f16"}
 
       assert attribute("string").embed == nil
     end
@@ -224,14 +229,17 @@ defmodule TP.AttributeTest do
   describe "capabilities and missing/2" do
     test "follow the type and indexes" do
       assert attribute("string", primary_key: true, field: :id).capabilities == [:filter, :glob]
+      assert attribute("uuid", primary_key: true, field: :id).capabilities == [:filter]
       assert attribute("string").capabilities == [:filter, :glob, :patch]
+      assert attribute("[]string").capabilities == [:filter, :glob, :patch]
+      assert attribute("int").capabilities == [:filter, :patch]
       assert attribute("string", glob: true, filterable: false).capabilities == [:glob, :patch]
 
       assert attribute("string", regex: true, fuzzy: true, full_text_search: true).capabilities ==
                [:regex, :fuzzy, :full_text_search, :patch]
 
-      assert attribute("string", embed: "m").capabilities == [:filter, :glob, :embed]
-      assert attribute("[3]f32", ann: true).capabilities == [:ann, :vector, :embed]
+      assert attribute("string", embed: "m").capabilities == [:filter, :glob, :embed, :embed_model]
+      assert attribute("[3]f32", ann: true).capabilities == [:ann, :vector, :embed_model]
       assert attribute("[][3]f32", ann: [late_interaction: true]).capabilities == [:ann, :vector]
       assert attribute("[][3]f32", ann: false).capabilities == [:vector]
       assert attribute("{}f16").capabilities == [:sparse_knn, :patch]
@@ -245,8 +253,15 @@ defmodule TP.AttributeTest do
       assert TP.Attribute.missing(markdown, :glob) == ":markdown needs `glob: true` or to be filterable"
       assert TP.Attribute.missing(markdown, :ann) == ":markdown has no ANN index"
       assert TP.Attribute.missing(markdown, :vector) == ":markdown isn't a vector"
-      assert TP.Attribute.missing(markdown, :embed) == ":markdown isn't embedded text or a vector"
+      assert TP.Attribute.missing(markdown, :embed) == ":markdown isn't embedded text"
+      assert TP.Attribute.missing(markdown, :embed_model) == ":markdown isn't embedded text or a vector"
       assert TP.Attribute.missing(markdown, :sparse_knn) == ":markdown isn't a sparse vector"
+
+      assert TP.Attribute.missing(attribute("int", field: :position), :glob) ==
+               ":position isn't a string or []string, so it can't be matched with a glob"
+
+      assert TP.Attribute.missing(attribute("[3]f32", field: :vector, ann: true), :embed) ==
+               ":vector is a vector, so embed(text) needs the model: embed(^text, ^model)"
 
       assert TP.Attribute.missing(attribute("[3]f32", field: :vector, ann: true), :patch) =~
                ":vector can't be patched: turbopuffer can't patch vectors or the text it embeds"

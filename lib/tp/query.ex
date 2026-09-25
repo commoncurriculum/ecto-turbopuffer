@@ -14,7 +14,7 @@ defmodule TP.Query do
       as a third argument for type-ahead.
     * `ann(field, vector)` and `knn(field, vector)` - approximate and exact vector search, closest first, so order
       them `asc`. The vector can be `embed(^text)` to rank a field that turbopuffer embeds natively, or
-      `embed(^text, ^model)` to name the model.
+      `embed(^text, ^model)` to name the model, which ranking a vector field needs.
     * `sparse_knn(field, weights)` - sparse vector search, highest first.
     * `+` sums scores, `number * score` weights one, and `max_score(a, b)` takes the higher.
 
@@ -40,51 +40,64 @@ defmodule TP.Query do
   back by name. String fragments like `fragment("Glob(?, ?)", ...)` aren't turbopuffer operators.
   """
 
-  # Each operator's turbopuffer name, its arities, the attribute capability it needs (see TP.Attribute), and its
-  # role: a filter, a score ranked in its natural direction, a computed attribute, an `embed` vector query, a way
-  # to combine scores, or `$dist`. The last argument of the longer arity is an options map, except for `embed`.
+  # turbopuffer requires max_edit_distance, and each step's min_query_chars must be at least 3 * (distance + 1).
+  @fuzzy_distances %{
+    "max_edit_distance" => [
+      %{"min_query_chars" => 3, "distance" => 0},
+      %{"min_query_chars" => 6, "distance" => 1},
+      %{"min_query_chars" => 9, "distance" => 2}
+    ]
+  }
+
+  # Each macro's turbopuffer operator:
+  #   * `arities` - the longer one's last argument is an options map, except for `embed`
+  #   * `needs` - the attribute capability it needs (see TP.Attribute)
+  #   * `role` - a filter, a score ranked best first in the given direction, `embed`'s vector query, a way to
+  #     combine scores, or `$dist`
+  #   * `defaults` - the options sent when none are given
+  #   * `select` - whether turbopuffer computes it per row in a select (compute_attributes)
+  #   * `vector_query` - whether its second argument is a vector that can be `embed(text)`
   @operators [
-    {:fuzzy, "Fuzzy", [2, 3], :fuzzy, :filter},
-    {:regex, "Regex", [2], :regex, :filter},
-    {:glob, "Glob", [2], :glob, :filter},
-    {:iglob, "IGlob", [2], :glob, :filter},
-    {:contains, "Contains", [2], :filter, :filter},
-    {:contains_any, "ContainsAny", [2], :filter, :filter},
-    {:contains_all_tokens, "ContainsAllTokens", [2, 3], :full_text_search, :filter},
-    {:contains_any_token, "ContainsAnyToken", [2, 3], :full_text_search, :filter},
-    {:contains_token_sequence, "ContainsTokenSequence", [2], :full_text_search, :filter},
-    {:any_lt, "AnyLt", [2], :filter, :filter},
-    {:any_lte, "AnyLte", [2], :filter, :filter},
-    {:any_gt, "AnyGt", [2], :filter, :filter},
-    {:any_gte, "AnyGte", [2], :filter, :filter},
-    {:bm25, "BM25", [2, 3], :full_text_search, {:score, :desc}},
-    {:ann, "ANN", [2], :ann, {:score, :asc}},
-    {:knn, "kNN", [2], :vector, {:score, :asc}},
-    {:sparse_knn, "SparseKNN", [2], :sparse_knn, {:score, :desc}},
-    {:vector_distance, "VectorDist", [2], :vector, :compute},
-    {:embed, "Embed", [1, 2], nil, :embed},
-    {:max_score, "Max", [2], nil, :max},
-    {:dist, "$dist", [0], nil, :dist}
+    fuzzy: [op: "Fuzzy", arities: [2, 3], needs: :fuzzy, role: :filter, defaults: @fuzzy_distances],
+    regex: [op: "Regex", arities: [2], needs: :regex, role: :filter],
+    glob: [op: "Glob", arities: [2], needs: :glob, role: :filter],
+    iglob: [op: "IGlob", arities: [2], needs: :glob, role: :filter],
+    contains: [op: "Contains", arities: [2], needs: :filter, role: :filter],
+    contains_any: [op: "ContainsAny", arities: [2], needs: :filter, role: :filter],
+    contains_all_tokens: [op: "ContainsAllTokens", arities: [2, 3], needs: :full_text_search, role: :filter],
+    contains_any_token: [op: "ContainsAnyToken", arities: [2, 3], needs: :full_text_search, role: :filter],
+    contains_token_sequence: [op: "ContainsTokenSequence", arities: [2], needs: :full_text_search, role: :filter],
+    any_lt: [op: "AnyLt", arities: [2], needs: :filter, role: :filter],
+    any_lte: [op: "AnyLte", arities: [2], needs: :filter, role: :filter],
+    any_gt: [op: "AnyGt", arities: [2], needs: :filter, role: :filter],
+    any_gte: [op: "AnyGte", arities: [2], needs: :filter, role: :filter],
+    bm25: [op: "BM25", arities: [2, 3], needs: :full_text_search, role: {:score, :desc}, select: true],
+    ann: [op: "ANN", arities: [2], needs: :ann, role: {:score, :asc}, vector_query: true],
+    knn: [op: "kNN", arities: [2], needs: :vector, role: {:score, :asc}, vector_query: true],
+    sparse_knn: [op: "SparseKNN", arities: [2], needs: :sparse_knn, role: {:score, :desc}],
+    vector_distance: [op: "VectorDist", arities: [2], needs: :vector, select: true, vector_query: true],
+    embed: [op: "Embed", arities: [1, 2], role: :embed],
+    max_score: [op: "Max", arities: [2], role: :max],
+    dist: [op: "$dist", arities: [0], role: :dist]
   ]
 
-  for {name, op, arities, _needs, _role} <- @operators, arity <- arities do
+  for {name, spec} <- @operators, arity <- spec[:arities] do
     args = Macro.generate_arguments(arity, __MODULE__)
 
     @doc false
     defmacro unquote(name)(unquote_splicing(args)) do
-      keyword = [{unquote(String.to_atom(op)), unquote(args)}]
+      keyword = [{unquote(String.to_atom(spec[:op])), unquote(args)}]
       quote do: fragment(unquote(keyword))
     end
   end
 
   @doc false
-  # The operator a keyword fragment names: `%{op:, arities:, needs:, role:}`, or nil when it isn't one.
+  # The operator a keyword fragment names, as a map of the fields above, or nil when it isn't one.
   def __operator__(key)
 
-  for {_name, op, arities, needs, role} <- @operators do
-    def __operator__(unquote(String.to_atom(op))) do
-      %{op: unquote(op), arities: unquote(arities), needs: unquote(needs), role: unquote(Macro.escape(role))}
-    end
+  for {_name, spec} <- @operators do
+    operator = Map.merge(%{needs: nil, role: nil, defaults: nil, select: false, vector_query: false}, Map.new(spec))
+    def __operator__(unquote(String.to_atom(spec[:op]))), do: unquote(Macro.escape(operator))
   end
 
   def __operator__(_key), do: nil
