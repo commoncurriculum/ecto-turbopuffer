@@ -81,8 +81,8 @@ defmodule Ecto.Adapters.Turbopuffer.Expr do
   end
 
   @doc """
-  A selected expression: `{:attribute, name}`, `{:literal, value}`, `:dist`, or `{:compute, expr}` for a
-  value turbopuffer computes per row.
+  A selected expression: `{:attribute, name}`, `{:literal, value}`, `:dist`, `{:compute, expr}` for a value
+  turbopuffer computes per row, or `{:match, expr}` for a filter it computes as 1 or 0.
   """
   def selected(ctx, expr) do
     cond do
@@ -91,6 +91,9 @@ defmodule Ecto.Adapters.Turbopuffer.Expr do
 
       literal?(expr) ->
         {:literal, value(ctx, expr)}
+
+      filter?(ctx, expr) ->
+        {:match, filter_score!(ctx, expr)}
 
       true ->
         case operator(ctx, expr) do

@@ -122,23 +122,18 @@ defmodule Ecto.Adapters.Turbopuffer.NamespacesTest do
     assert Repo.aggregate(ShardedStack, :count) == 10
   end
 
-  test "recall measures the vector index over random documents, kept to a query's filters" do
-    Repo.insert_all(
-      CardStack,
-      stacks(20, planbook_id: "p1") ++
-        [
-          %{id: "x1", planbook_id: "p2", vector: [1.0, 0.0, 0.0]},
-          %{id: "x2", planbook_id: "p2", vector: [0.0, 1.0, 0.0]}
-        ]
-    )
+  test "recall measures the vector index over random documents, with a query's filters and limit" do
+    Repo.insert_all(CardStack, stacks(20, planbook_id: "p1"))
 
     assert %{"avg_recall" => recall, "avg_ann_count" => 5.0, "avg_exhaustive_count" => 5.0} =
              Turbopuffer.recall(Repo, CardStack, num: 3, top_k: 5)
 
     assert recall >= 0 and recall <= 1
 
-    # Only two documents match, fewer than the limit.
-    assert %{"avg_exhaustive_count" => 2.0} =
-             Turbopuffer.recall(Repo, from(c in CardStack, where: c.planbook_id == "p2", limit: 3), num: 2)
+    {result, [request]} =
+      requests(fn -> Turbopuffer.recall(Repo, from(c in CardStack, where: c.planbook_id == "p1", limit: 3), num: 2) end)
+
+    assert request.query == %{"filters" => ["planbook_id", "Eq", "p1"], "top_k" => 3, "num" => 2}
+    assert %{"avg_recall" => _, "avg_ann_count" => 3.0, "avg_exhaustive_count" => 3.0} = result
   end
 end

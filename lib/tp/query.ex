@@ -24,7 +24,8 @@ defmodule TP.Query do
       is its inverse, 1 at 0 and falling to 0.5 at `midpoint`. Both take an exponent as a third argument (1 by
       default). A datetime distance's midpoint can be milliseconds or a duration like `"6h"`.
     * A filter scores 1 where it matches and 0 elsewhere, so `bm25(c.title, ^text) + 2.0 * (c.species == "whale")`
-      boosts whales. Documents scoring 0 overall aren't returned.
+      boosts whales. turbopuffer leaves out documents that text searches and filters score 0, but not those an
+      attribute or distance scores 0.
     * `+` sums scores, `number * score` weights one, and `max_score(a, b)` takes the higher, where either can be a
       number.
 
@@ -33,6 +34,7 @@ defmodule TP.Query do
     * `dist()` - the rank score, turbopuffer's `$dist`.
     * Any score but a vector search, e.g. `bm25(c.markdown, ^text)` or `saturate(attribute(c.views), 100)`,
       computed for each row without ranking by it, and `vector_distance(field, vector)` for a vector's distance.
+      A filter, like `c.views > 50`, selects as a boolean.
     * `highlight(field)` - the fragments of a full-text field that match the query's `bm25` on it, as maps with
       `"text"`. Pass a map of turbopuffer's options as a second argument (`fragment_by`, `fragment_limit`,
       `include_offsets`, and `rank_fragments_by`, which a query not ranked by the field's `bm25` needs). See

@@ -218,7 +218,8 @@ defmodule Ecto.Adapters.Turbopuffer do
 
         path = "/v1/namespaces" <> if(query == "", do: "", else: "?" <> query)
         page = request!(meta, :get, path, nil, [], :list_namespaces, nil)
-        {Enum.map(page["namespaces"], & &1["id"]), page["next_cursor"]}
+        names = Enum.map(page["namespaces"], & &1["id"])
+        {names, if(names != [], do: page["next_cursor"])}
     end)
     |> Enum.concat()
   end

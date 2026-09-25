@@ -109,10 +109,15 @@ defmodule Ecto.Adapters.Turbopuffer.SearchTest do
       Repo.all(from e in Everything, order_by: ^[desc: order_by], limit: 5, select: {e.id, dist()})
     end
 
-    test "attribute/1 scores a number, and a signed number's negatives as 0, which drops them" do
+    test "attribute/1 scores a number, and a signed number's negatives as 0" do
       assert [{"popular", 1_000.0}, {"recent", 100.0}, {"old", 10.0}] = scored(dynamic([e], attribute(e.views)))
-      assert [{"popular", 5.0}, {"recent", 1.0}] = scored(dynamic([e], attribute(e.position)))
-      assert [{"popular", 5.0}, {"recent", 1.0}] = scored(dynamic([e], max_score(0, attribute(e.position))))
+      assert [{"popular", 5.0}, {"recent", 1.0}, {"old", 0.0}] = scored(dynamic([e], attribute(e.position)))
+
+      assert [{"popular", 5.0}, {"recent", 1.0}, {"old", 0.0}] =
+               scored(dynamic([e], max_score(0, attribute(e.position))))
+
+      assert Enum.sort(scored(dynamic([e], max_score(2, attribute(e.position))))) ==
+               [{"old", 2.0}, {"popular", 5.0}, {"recent", 2.0}]
     end
 
     test "saturate and decay map scores into 0..1 around a midpoint" do
@@ -135,23 +140,27 @@ defmodule Ecto.Adapters.Turbopuffer.SearchTest do
                scored(dynamic([e], decay(distance(e.updated_at, ^now), "6h")))
 
       assert [{"recent", 1.0} | _] = scored(dynamic([e], decay(distance(e.updated_at, ^now), 21_600_000)))
-      assert [{"popular", 900.0}, {"old", 90.0}] = scored(dynamic([e], distance(e.views, 100)))
+      assert [{"popular", 900.0}, {"old", 90.0}, {"recent", 0.0}] = scored(dynamic([e], distance(e.views, 100)))
     end
 
     test "a filter scores 1 where it matches, so it boosts documents or ranks them alone" do
       assert [{"popular", _}, {"old", _}, {"recent", _}] =
                scored(dynamic([e], bm25(e.title, "fox") + 2.0 * (e.id == "popular") + (e.views < 50)))
 
+      # Unlike an attribute or distance, a filter that scores 0 leaves the document out.
       assert [{"recent", 1.0}] = scored(dynamic([e], e.views == 100))
       assert [{"old", 3.0}] = scored(dynamic([e], 3 * regex(e.title, "old$")))
     end
 
-    test "a select computes any score but a vector search for each row" do
-      assert Repo.all(
-               from e in Everything,
-                 where: e.id == "recent",
-                 select: {e.id, saturate(attribute(e.views), 100), e.views > 50, attribute(e.position)}
-             ) == [{"recent", 0.5, 1.0, 1.0}]
+    test "a select computes any score but a vector search for each row, and a filter as a boolean" do
+      assert [{"old", old, false, 0.0}, {"recent", 0.5, true, 1.0}] =
+               Repo.all(
+                 from e in Everything,
+                   where: e.id in ["recent", "old"],
+                   select: {e.id, saturate(attribute(e.views), 100), e.views > 50, attribute(e.position)}
+               )
+
+      assert_in_delta old, 10 / 110, 0.0001
     end
   end
 

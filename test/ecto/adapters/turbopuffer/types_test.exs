@@ -73,7 +73,11 @@ defmodule Ecto.Adapters.Turbopuffer.TypesTest do
         end
 
         for {option, value} <- Map.delete(TP.Attribute.to_schema(attribute), "type") do
-          assert_stored(stored_entry[option], value, "#{label}'s #{option}")
+          # An embedding model given as a string comes back as its model and target attribute.
+          stored =
+            if option == "embed" and is_binary(value), do: stored_entry[option]["model"], else: stored_entry[option]
+
+          assert_stored(stored, value, "#{label}'s #{option}")
         end
 
         if attribute.options[:ann] do
@@ -83,15 +87,15 @@ defmodule Ecto.Adapters.Turbopuffer.TypesTest do
     end
   end
 
-  # turbopuffer echoes settings back as their full configuration: `true` as every BM25 parameter, an ANN index as
-  # its distance metric, and an embedding as its model and target attribute, without dims and dtype, which show in
-  # the target's type instead.
-  defp assert_stored(stored, true, label), do: assert(stored not in [nil, false], label)
-  defp assert_stored(stored, model, label) when is_binary(model), do: assert(stored["model"] == model, label)
+  # turbopuffer echoes settings back as their full configuration: `true` as every BM25 parameter or an ANN index's
+  # distance metric, and an embedding without dims and dtype, which show in the target's type instead.
+  defp assert_stored(stored, true, label), do: assert(stored not in [nil, false], "#{label}: #{inspect(stored)}")
 
   defp assert_stored(stored, %{} = declared, label) do
-    for {key, value} <- declared, key not in ["dims", "dtype"], do: assert(stored[key] == value, "#{label}.#{key}")
+    for {key, value} <- declared, key not in ["dims", "dtype"], do: assert_stored(stored[key], value, "#{label}.#{key}")
   end
 
-  defp assert_stored(stored, declared, label), do: assert(stored == declared, label)
+  defp assert_stored(stored, declared, label) do
+    assert stored == declared, "#{label}: turbopuffer stored #{inspect(stored)}, TP declared #{inspect(declared)}"
+  end
 end

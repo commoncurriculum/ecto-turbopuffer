@@ -418,6 +418,10 @@ defmodule Ecto.Adapters.Turbopuffer.Plan do
             label = "ecto_#{index}"
             {{:key, label, nil}, {include, Map.put(compute, label, expr)}}
 
+          {:match, expr} ->
+            label = "ecto_#{index}"
+            {{:match, label}, {include, Map.put(compute, label, expr)}}
+
           {:literal, value} ->
             {{:literal, value}, {include, compute}}
         end
@@ -456,6 +460,8 @@ defmodule Ecto.Adapters.Turbopuffer.Plan do
   defp read(readers, row) do
     Enum.map(readers, fn
       {:key, key, default} -> Map.get(row, key, default)
+      # turbopuffer computes a filter as 1 where it matches and 0 elsewhere.
+      {:match, key} -> row[key] == 1
       {:literal, value} -> value
     end)
   end

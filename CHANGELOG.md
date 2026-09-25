@@ -15,6 +15,8 @@
   `ref_new/1` is the value being written, and `disable_backpressure: true` for bulk loads.
 - `use TP, num_shards: n` shards the namespace.
 - Queries that select vectors read them as base64.
+- `full_text_search` with `case_sensitive: true` and `stemming: true` or `remove_stopwords: true` fails at compile
+  time, since turbopuffer rejects it.
 
 ### Breaking changes
 
