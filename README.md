@@ -56,16 +56,22 @@ Add `MyApp.Search` to your supervision tree like any other repo.
 - **`TP`** is the Ecto type, the turbopuffer counterpart of [`Ch`](https://github.com/plausible/ch). `type:` takes
   turbopuffer's type strings (`"string"`, `"[]uuid"`, `"[1536]f16"`, `"{}f16"`, ...) and every other option is a
   turbopuffer schema option (`full_text_search:`, `filterable:`, `ann:`, `embed:`, ...). Both are checked at compile
-  time, along with turbopuffer's namespace limits. `use TP` sets the namespace's `distance_metric`.
+  time. Every schema with `TP` fields needs `use TP`, which checks turbopuffer's namespace limits when the schema
+  compiles and sets the namespace's `distance_metric`.
+- **`TP.Namespace`** is a schema's namespace: the schema writes declare, and the limits each written value has to
+  fit.
 - **`Ecto.Adapters.Turbopuffer`** maps `insert`, `update`, `delete`, `all`, `aggregate`, `update_all`, `delete_all`
   and `union_all` onto turbopuffer's write and query APIs. Its moduledoc lists what maps to what, and the limits.
-- **`TP.Query`** adds turbopuffer's search and filter operators to `Ecto.Query`: `bm25`, `ann`, `knn`,
-  `sparse_knn`, `embed`, `fuzzy`, `regex`, `contains_all_tokens`, `dist`, and so on.
+  Its functions cover the rest of the API, by schema: `metadata`, `update_metadata` (read-only and pinning),
+  `warm_cache`, `delete_namespace`, `list_namespaces`, `update_schema`, `branch`, `copy` and `recall`.
+- **`TP.Query`** adds turbopuffer's operators to `Ecto.Query`: searches (`bm25`, `ann`, `knn`, `sparse_knn`,
+  `embed`), scores (`attribute`, `distance`, `saturate`, `decay`, `max_score`, and filters as boosts), filters
+  (`fuzzy`, `regex`, `glob`, `contains_all_tokens`, ...), and per-row values (`dist`, `vector_distance`,
+  `highlight`).
 
 HTTP goes through the [`turbopuffer`](https://github.com/commoncurriculum/turbopuffer) driver, our fork of
-[jallum/turbopuffer](https://github.com/jallum/turbopuffer) whose `combined` branch carries the fixes we've proposed
-upstream. The driver works without Ecto; `Ecto.Adapters.Turbopuffer.client(MyApp.Search)` returns the repo's
-`Turbopuffer.Client` for calls like namespace metadata, deletion, or anything else the adapter doesn't cover.
+[jallum/turbopuffer](https://github.com/jallum/turbopuffer) that carries the fixes we've proposed upstream. The
+driver works without Ecto; `Ecto.Adapters.Turbopuffer.client(MyApp.Search)` returns the repo's `Turbopuffer.Client`.
 Typed results stay here, in `TP`, because turbopuffer's JSON doesn't say which strings are datetimes or uuids.
 
 turbopuffer has no nested attributes, so documents are flat: every field is a `TP` field.
@@ -83,6 +89,12 @@ from c in CardStack, order_by: ann(c.markdown, embed(^text)), limit: 20
 text = from c in CardStack, order_by: [desc: bm25(c.markdown, ^q)], limit: 50
 vector = from c in CardStack, order_by: ann(c.markdown, embed(^q)), limit: 50
 MyApp.Search.all(union_all(text, ^vector), rerank_by: {:rrf, limit: 20})
+
+# Relevance boosted by recency and by a filter, with the matching passages.
+from c in CardStack,
+  order_by: [desc: bm25(c.markdown, ^q) + decay(distance(c.updated_at, ^now), "7d") + 0.5 * (c.planbook_id == ^id)],
+  limit: 20,
+  select: {c, highlight(c.markdown)}
 ```
 
 ## Development
@@ -90,8 +102,12 @@ MyApp.Search.all(union_all(text, ^vector), rerank_by: {:rrf, limit: 20})
 turbopuffer's documentation, as the Markdown it publishes, is in [`docs/turbopuffer/`](docs/turbopuffer). Refresh it
 with `scripts/fetch-turbopuffer-docs.sh`.
 
-The tests run against real turbopuffer, as its [testing guide](docs/turbopuffer/testing.md) recommends. Each test
-writes to its own namespaces and deletes them afterwards.
+The tests run against real turbopuffer, as its [testing guide](docs/turbopuffer/testing.md) recommends, when
+`TURBOPUFFER_API_KEY` is set. Each writes to its own namespaces and deletes them afterwards. CI requires the key.
+Without it, `mix test` runs only what doesn't need turbopuffer: what the adapter refuses before sending, type
+casting, and `test/coverage_test.exs`, which maps every endpoint, parameter and operator in the vendored docs to the
+test that covers it, or says why none can. The embedding tests use every model turbopuffer offers
+(`TP.Test.Embedding`), at every dimension and element type each supports.
 
 ```sh
 TURBOPUFFER_API_KEY=... mix test

@@ -15,29 +15,20 @@ defmodule TP do
         end
       end
 
-  `type:` takes turbopuffer's type strings and every other option is a turbopuffer schema option
-  (see `TP.Attribute`), validated at compile time.
+  `type:` takes turbopuffer's type strings and every other option is a turbopuffer schema option (see
+  `TP.Attribute`), validated at compile time.
 
-  `use TP` sets namespace-level options and checks the whole namespace at compile time:
+  Every schema with `TP` fields needs `use TP`, before `schema`. It checks the whole namespace when the schema
+  compiles (see `TP.Namespace`) and takes these options:
 
-    * `:distance_metric` - `:cosine_distance` or `:euclidean_squared`. turbopuffer needs one on every write to a
-      namespace with vector columns, including the ones native embedding computes. A vector's
-      `ann: [distance_metric: ...]` also sets it, and the two can't disagree.
+    * `:distance_metric` - `:cosine_distance` or `:euclidean_squared`, required when the namespace has vector
+      columns, including the ones native embedding computes. turbopuffer applies it to every vector column.
+    * `:num_shards` - partitions the namespace across 1 to 256 shards, to grow past one index's size limit. It's
+      fixed when the namespace is created, so changing it later makes writes fail. See `docs/turbopuffer/sharding.md`.
 
-  The rest of the API:
-
-    * `TP.schema/1` renders the namespace schema to send with writes, after checking turbopuffer's namespace-wide
-      rules: a valid namespace name, one `id` primary key, 1,024 attributes, 8 vector columns (embedded attributes'
-      computed vectors count), 4 embedded attributes, and one distance metric, which namespaces with vector columns
-      must declare.
-    * `TP.distance_metric/1` is that distance metric, for the write's `distance_metric`.
-    * `TP.attributes/1` lists the schema's fields as `TP.Attribute`s.
-    * `TP.dump/1` turns a struct into an `upsert_rows` row and `TP.dump_attribute/3` encodes a single value, such as
-      a filter operand. Both enforce turbopuffer's value limits: 64-byte ids, 4 KiB filterable values, 8 MiB values,
-      and 1,024 sparse dimensions.
-    * `TP.load/2` turns a query row back into the struct.
-
-  turbopuffer stores datetimes at millisecond precision, so `TP` casts them to milliseconds.
+  Casting is lenient the way Ecto's own types are: `"7"` casts to an int, and a date to a datetime at midnight UTC.
+  Dumping only encodes values that already fit the type. turbopuffer stores datetimes at millisecond precision, so
+  `TP` truncates them to milliseconds.
   """
   use Ecto.ParameterizedType
 
@@ -47,157 +38,63 @@ defmodule TP do
   @f16_max 65_504.0
   @f32_max 3.4028234663852886e38
 
-  @max_attributes 1_024
-  @max_vector_columns 8
-  @max_embedded_attributes 4
-  @max_id_bytes 64
-  @max_filterable_value_bytes 4_096
-  @max_value_bytes 8 * 1024 * 1024
-  @max_sparse_dims 1_024
-
   defmacro __using__(opts) do
     quote bind_quoted: [opts: opts] do
-      @tp_distance_metric TP.__distance_metric_option__!(opts, __MODULE__)
+      @tp_options TP.__options__!(opts)
+      @tp_distance_metric @tp_options.distance_metric
       @after_compile TP
 
       @doc false
-      def __tp__(:distance_metric), do: @tp_distance_metric
+      def __tp__(:distance_metric), do: @tp_options.distance_metric
+      def __tp__(:num_shards), do: @tp_options.num_shards
     end
   end
 
   @doc false
-  def __distance_metric_option__!(opts, module) do
-    case Keyword.keys(opts) -- [:distance_metric] do
-      [] -> :ok
-      unknown -> raise ArgumentError, "unknown `use TP` option(s) #{inspect(unknown)} in #{inspect(module)}"
-    end
+  def __options__!(opts) do
+    opts = Keyword.validate!(opts, [:distance_metric, :num_shards])
 
-    case opts[:distance_metric] do
-      nil ->
-        nil
+    distance_metric =
+      case opts[:distance_metric] do
+        nil ->
+          nil
 
-      metric ->
-        string = if is_atom(metric), do: Atom.to_string(metric), else: metric
-
-        if string in TP.Attribute.distance_metrics() do
-          string
-        else
-          raise ArgumentError,
-                ":distance_metric must be one of #{Enum.join(TP.Attribute.distance_metrics(), ", ")}, " <>
-                  "got: #{inspect(metric)} in #{inspect(module)}"
-        end
-    end
-  end
-
-  @doc false
-  def __after_compile__(env, _bytecode), do: schema(env.module)
-
-  @doc """
-  The turbopuffer schema for an Ecto schema whose fields all use `TP`, keyed by attribute name.
-  Raises if the schema breaks a namespace-wide limit.
-  """
-  @spec schema(module()) :: %{String.t() => map() | String.t()}
-  def schema(module) do
-    module
-    |> attributes()
-    |> validate_namespace!(module)
-    |> Enum.flat_map(fn
-      %{primary_key: false} = attribute -> [{attribute.name, attribute.schema_entry}]
-      # turbopuffer infers string ids, so only uuid and uint ids need declaring.
-      %{type: :string} -> []
-      attribute -> [{attribute.name, TP.Types.encode(attribute.type)}]
-    end)
-    |> Map.new()
-  end
-
-  @doc """
-  The namespace's distance metric, from `use TP` or a vector's `ann` options. `nil` when it has no vector columns.
-  """
-  @spec distance_metric(module()) :: String.t() | nil
-  def distance_metric(module) do
-    module |> attributes() |> validate_namespace!(module) |> resolve_distance_metric!(module)
-  end
-
-  @doc """
-  Dumps a struct to a row for `upsert_rows`, keyed by attribute name. Raises if a value doesn't fit its type or
-  turbopuffer's limits, or if the id or a vector is missing.
-  """
-  @spec dump(struct()) :: %{String.t() => term()}
-  def dump(%module{} = struct) do
-    attributes = attributes(module)
-
-    attributes
-    |> Map.new(fn attribute -> {attribute.name, dump!(Map.fetch!(struct, attribute.field), attribute, module)} end)
-    |> complete_row!(attributes, module)
-  end
-
-  @doc false
-  # Checks a row of values Ecto already dumped, keyed by source, the way `dump/1` checks a struct.
-  def __row__(module, dumped) do
-    dumped
-    |> Map.new(fn {source, value} -> {to_string(source), value} end)
-    |> complete_row!(attributes(module), module)
-  end
-
-  @doc """
-  The attributes of a schema whose fields all use `TP`, in field order.
-  """
-  @spec attributes(module()) :: [TP.Attribute.t()]
-  def attributes(module) do
-    Enum.map(module.__schema__(:fields), fn field ->
-      case module.__schema__(:type, field) do
-        {:parameterized, {TP, attribute}} ->
-          attribute
+        metric when metric in [:cosine_distance, :euclidean_squared] ->
+          Atom.to_string(metric)
 
         other ->
           raise ArgumentError,
-                "#{inspect(module)}.#{field} has type #{inspect(other)}, but every turbopuffer attribute must use " <>
-                  "TP. turbopuffer has no nested attributes, so flatten embedded data into TP fields."
+                ":distance_metric must be :cosine_distance or :euclidean_squared, got: #{inspect(other)}"
       end
-    end)
+
+    num_shards =
+      case opts[:num_shards] do
+        shards when is_nil(shards) or (is_integer(shards) and shards in 1..256) -> shards
+        other -> raise ArgumentError, ":num_shards must be an integer from 1 to 256, got: #{inspect(other)}"
+      end
+
+    %{distance_metric: distance_metric, num_shards: num_shards}
   end
 
-  @doc """
-  Encodes one value for `module`'s `field` the way turbopuffer expects it, e.g. a filter operand.
-  """
-  @spec dump_attribute(module(), atom(), term()) :: term()
-  def dump_attribute(module, field, value) do
-    case Enum.find(attributes(module), &(&1.field == field)) do
-      nil -> raise ArgumentError, "#{inspect(module)} has no field #{inspect(field)}"
-      attribute -> dump!(value, attribute, module)
-    end
-  end
-
-  @doc """
-  Loads a row returned by a turbopuffer query into `module`'s struct. Attributes the row doesn't include stay `nil`,
-  and attributes the schema doesn't declare (like `$dist`) are ignored.
-  """
-  @spec load(module(), %{String.t() => term()}) :: struct()
-  def load(module, row) when is_map(row) do
-    fields =
-      Enum.map(attributes(module), fn attribute ->
-        value = Map.get(row, attribute.name)
-
-        case load_value(value, attribute.type) do
-          {:ok, loaded} ->
-            {attribute.field, loaded}
-
-          _ ->
-            raise ArgumentError,
-                  "cannot load #{inspect(value, limit: 5, printable_limit: 100)} as turbopuffer " <>
-                    "#{TP.Types.encode(attribute.type)} for field #{inspect(attribute.field)} in #{inspect(module)}"
-        end
-      end)
-
-    struct(module, fields)
-  end
+  @doc false
+  def __after_compile__(env, _bytecode), do: TP.Namespace.validate!(env.module)
 
   # ------------------------------------------------------------------------------------------------
   # Ecto.ParameterizedType
   # ------------------------------------------------------------------------------------------------
 
   @impl Ecto.ParameterizedType
-  def init(opts), do: TP.Attribute.new(opts)
+  def init(opts) do
+    schema = opts[:schema]
+
+    if schema && Module.open?(schema) && not Module.has_attribute?(schema, :tp_distance_metric) do
+      raise ArgumentError,
+            "#{inspect(schema)} has TP fields, so it needs `use TP` before `schema`, which checks the namespace " <>
+              "and sets its distance metric"
+    end
+
+    TP.Attribute.new(opts)
+  end
 
   @impl Ecto.ParameterizedType
   def type(%{type: type}), do: ecto_type(type)
@@ -206,12 +103,8 @@ defmodule TP do
   def cast(value, %{type: type}), do: cast_value(value, type)
 
   @impl Ecto.ParameterizedType
-  def dump(value, _dumper, params) do
-    case encode_attribute(value, params) do
-      {:ok, dumped} -> {:ok, dumped}
-      {:error, _reason} -> :error
-    end
-  end
+  def dump(nil, _dumper, _attribute), do: {:ok, nil}
+  def dump(value, _dumper, %{type: type}), do: encode(value, type)
 
   @impl Ecto.ParameterizedType
   def load(value, _loader, %{type: type}), do: load_value(value, type)
@@ -219,12 +112,8 @@ defmodule TP do
   @impl Ecto.ParameterizedType
   def autogenerate(%{type: :uuid}), do: Ecto.UUID.generate()
 
-  def autogenerate(%{type: type}) do
-    raise ArgumentError, "TP can only autogenerate uuid ids, not #{TP.Types.encode(type)}"
-  end
-
   @impl Ecto.ParameterizedType
-  def embed_as(_format, _params), do: :dump
+  def embed_as(_format, _attribute), do: :dump
 
   @impl Ecto.ParameterizedType
   def format(%{type: type}), do: "#TP<#{TP.Types.encode(type)}>"
@@ -232,203 +121,6 @@ defmodule TP do
   # ------------------------------------------------------------------------------------------------
   # PRIVATE
   # ------------------------------------------------------------------------------------------------
-
-  defp validate_namespace!(attributes, module) do
-    embedded = Enum.filter(attributes, &Map.has_key?(&1.schema_entry, "embed"))
-    vector_columns = vector_column_count(attributes)
-
-    namespace = module.__schema__(:source)
-
-    cond do
-      not String.match?(namespace, ~r/\A[A-Za-z0-9\-_.]{1,128}\z/) ->
-        raise ArgumentError,
-              "#{inspect(module)}'s namespace #{inspect(namespace)} must match turbopuffer's [A-Za-z0-9-_.]{1,128}"
-
-      Enum.count(attributes, & &1.primary_key) != 1 ->
-        raise ArgumentError,
-              "#{inspect(module)} needs one TP primary key, " <>
-                "e.g. `@primary_key {:id, TP, type: \"string\", autogenerate: false}`"
-
-      length(attributes) > @max_attributes ->
-        raise ArgumentError,
-              "#{inspect(module)} has #{length(attributes)} attributes; turbopuffer allows #{@max_attributes}"
-
-      vector_columns > @max_vector_columns ->
-        raise ArgumentError,
-              "#{inspect(module)} has #{vector_columns} vector columns, counting embedded attributes' computed " <>
-                "vectors; turbopuffer allows #{@max_vector_columns}"
-
-      length(embedded) > @max_embedded_attributes ->
-        raise ArgumentError,
-              "#{inspect(module)} embeds #{length(embedded)} attributes; turbopuffer allows #{@max_embedded_attributes}"
-
-      true ->
-        :ok
-    end
-
-    Enum.each(embedded, &validate_embed_target!(&1, attributes, module))
-    resolve_distance_metric!(attributes, module)
-    attributes
-  end
-
-  defp vector_column_count(attributes) do
-    Enum.count(attributes, fn
-      %{type: {:vector, _dims, _element}} -> true
-      %{type: {:multi_vector, _dims, _element}} -> true
-      %{schema_entry: %{"embed" => _}} = attribute -> embed_target(attribute) == nil
-      _ -> false
-    end)
-  end
-
-  defp resolve_distance_metric!(attributes, module) do
-    declared = if function_exported?(module, :__tp__, 1), do: module.__tp__(:distance_metric)
-
-    case Enum.uniq(List.wrap(declared) ++ ann_distance_metrics(attributes)) do
-      [metric] ->
-        metric
-
-      [] ->
-        if vector_column_count(attributes) > 0 do
-          raise ArgumentError,
-                "#{inspect(module)} has vector columns, so turbopuffer needs a distance metric: " <>
-                  "add `use TP, distance_metric: :cosine_distance` (or :euclidean_squared)"
-        end
-
-        nil
-
-      metrics ->
-        raise ArgumentError,
-              "#{inspect(module)} declares different distance metrics (#{Enum.join(metrics, ", ")}), " <>
-                "but turbopuffer uses one per namespace"
-    end
-  end
-
-  defp embed_target(%{schema_entry: %{"embed" => %{"attribute" => target}}}), do: target
-  defp embed_target(_attribute), do: nil
-
-  defp validate_embed_target!(attribute, attributes, module) do
-    with target when is_binary(target) <- embed_target(attribute) do
-      embed = attribute.schema_entry["embed"]
-      where = "(field #{inspect(attribute.field)} in #{inspect(module)})"
-
-      case Enum.find(attributes, &(&1.name == target)) do
-        %{type: {:vector, dims, element}} ->
-          if embed["dims"] not in [nil, dims] do
-            raise ArgumentError, "embed dims #{embed["dims"]} don't match #{target}'s #{dims} dimensions #{where}"
-          end
-
-          if embed["dtype"] not in [nil, Atom.to_string(element)] do
-            raise ArgumentError, "embed dtype #{embed["dtype"]} doesn't match #{target}'s #{element} elements #{where}"
-          end
-
-        _ ->
-          raise ArgumentError, "embed attribute #{inspect(target)} must be an [N] vector field in the schema #{where}"
-      end
-    end
-  end
-
-  defp ann_distance_metrics(attributes) do
-    attributes
-    |> Enum.flat_map(fn
-      %{schema_entry: %{"ann" => %{"distance_metric" => metric}}} -> [metric]
-      _ -> []
-    end)
-    |> Enum.uniq()
-  end
-
-  defp complete_row!(row, attributes, module) do
-    Enum.reduce(attributes, row, fn
-      %{primary_key: true} = attribute, row ->
-        if row[attribute.name] == nil do
-          raise ArgumentError, "cannot dump #{inspect(module)} without an id: turbopuffer ids can't be null"
-        end
-
-        row
-
-      %{type: {:vector, _, _}} = attribute, row ->
-        if row[attribute.name] == nil do
-          require_embedded_vector!(attribute, attributes, row, module)
-          Map.delete(row, attribute.name)
-        else
-          row
-        end
-
-      _attribute, row ->
-        row
-    end)
-  end
-
-  # A vector that native embedding fills from a string attribute can be left out when that string is present.
-  defp require_embedded_vector!(attribute, attributes, row, module) do
-    unless Enum.any?(attributes, &(embed_target(&1) == attribute.name and row[&1.name] != nil)) do
-      raise ArgumentError,
-            "cannot dump #{inspect(module)} without #{inspect(attribute.field)}: " <>
-              "turbopuffer upserts must include every vector attribute"
-    end
-  end
-
-  defp dump!(value, attribute, module) do
-    case encode_attribute(value, attribute) do
-      {:ok, dumped} ->
-        dumped
-
-      {:error, reason} ->
-        raise ArgumentError,
-              "cannot dump #{inspect(value, limit: 5, printable_limit: 100)} as turbopuffer " <>
-                "#{TP.Types.encode(attribute.type)} for field #{inspect(attribute.field)} in #{inspect(module)}" <>
-                if(reason, do: ": #{reason}", else: "")
-    end
-  end
-
-  defp encode_attribute(value, %{type: type} = attribute) do
-    with {:ok, cast} <- cast_for_dump(value, type),
-         :ok <- check_limits(cast, attribute) do
-      {:ok, encode(cast, type)}
-    end
-  end
-
-  defp cast_for_dump(value, type) do
-    case cast_value(value, type) do
-      {:ok, cast} -> {:ok, cast}
-      _ -> {:error, nil}
-    end
-  end
-
-  defp check_limits(nil, _attribute), do: :ok
-
-  defp check_limits(id, %{primary_key: true}) when is_binary(id) and byte_size(id) > @max_id_bytes do
-    {:error, "turbopuffer ids can be at most #{@max_id_bytes} bytes"}
-  end
-
-  defp check_limits(binary, %{type: type} = attribute) when type in [:string, :bytes] do
-    check_size(byte_size(binary), attribute.filterable)
-  end
-
-  defp check_limits(strings, %{type: {:array, :string}} = attribute) do
-    sizes = Enum.map(strings, &byte_size/1)
-
-    with :ok <- check_size(Enum.sum(sizes), false) do
-      check_size(Enum.max(sizes, fn -> 0 end), attribute.filterable)
-    end
-  end
-
-  defp check_limits(weights, %{type: {:sparse_vector, _}}) when map_size(weights) > @max_sparse_dims do
-    {:error, "turbopuffer sparse vectors can have at most #{@max_sparse_dims} dimensions"}
-  end
-
-  defp check_limits(_value, _attribute), do: :ok
-
-  defp check_size(bytes, _filterable) when bytes > @max_value_bytes do
-    {:error, "it's #{bytes} bytes, over turbopuffer's 8 MiB limit per value"}
-  end
-
-  defp check_size(bytes, true) when bytes > @max_filterable_value_bytes do
-    {:error,
-     "it's #{bytes} bytes, over turbopuffer's 4 KiB limit for filterable values " <>
-       "(set `filterable: false` or enable full-text search)"}
-  end
-
-  defp check_size(_bytes, _filterable), do: :ok
 
   defp ecto_type(:string), do: :string
   defp ecto_type(type) when type in [:int, :uint], do: :integer
@@ -456,21 +148,15 @@ defmodule TP do
   end
 
   defp cast_value(value, :bytes) when is_binary(value), do: {:ok, value}
-  defp cast_value(values, {:array, element}) when is_list(values), do: cast_list(values, &cast_element(&1, element))
-  defp cast_value(values, {:vector, _, _} = type) when is_list(values), do: cast_vector(values, type)
+  defp cast_value(values, {:array, element}) when is_list(values), do: map_ok(values, &cast_element(&1, element))
+  defp cast_value(values, {:vector, _, _} = type) when is_list(values), do: vector(values, type)
 
   defp cast_value(vectors, {:multi_vector, dims, element}) when is_list(vectors) do
-    cast_list(vectors, &cast_vector(&1, {:vector, dims, element}))
+    map_ok(vectors, &vector(&1, {:vector, dims, element}))
   end
 
   defp cast_value(%{} = weights, {:sparse_vector, _}) when not is_struct(weights) do
-    Enum.reduce_while(weights, {:ok, %{}}, fn
-      {key, weight}, {:ok, acc} when (is_binary(key) or is_atom(key)) and is_number(weight) ->
-        {:cont, {:ok, Map.put(acc, to_string(key), weight / 1)}}
-
-      _, _ ->
-        {:halt, :error}
-    end)
+    with {:ok, pairs} <- map_ok(Map.to_list(weights), &weight(&1, true)), do: {:ok, Map.new(pairs)}
   end
 
   defp cast_value(_value, _type), do: :error
@@ -502,23 +188,35 @@ defmodule TP do
 
   defp cast_datetime(value), do: Ecto.Type.cast(:utc_datetime_usec, value)
 
-  defp cast_vector(values, {:vector, dims, element}) when is_list(values) and length(values) == dims do
+  # A dense vector's elements as floats, or integers for i8, within the element type's range.
+  defp vector(values, {:vector, dims, element}) when is_list(values) and length(values) == dims do
     max = if element == :f16, do: @f16_max, else: @f32_max
 
-    cast_list(values, fn
+    map_ok(values, fn
       value when element == :i8 and is_integer(value) and value in -128..127 -> {:ok, value}
       value when element != :i8 and is_number(value) and abs(value) <= max -> {:ok, value / 1}
       _ -> :error
     end)
   end
 
-  defp cast_vector(_values, _type), do: :error
+  defp vector(_values, _type), do: :error
 
-  defp cast_list(values, cast_fun) do
+  # A sparse vector's {dimension, weight}. Casting also takes atom dimensions.
+  defp weight({key, weight}, atom_keys?) when is_number(weight) and abs(weight) <= @f16_max do
+    cond do
+      is_binary(key) -> {:ok, {key, weight / 1}}
+      atom_keys? and is_atom(key) and not is_nil(key) -> {:ok, {Atom.to_string(key), weight / 1}}
+      true -> :error
+    end
+  end
+
+  defp weight(_pair, _atom_keys?), do: :error
+
+  defp map_ok(values, fun) do
     values
     |> Enum.reduce_while({:ok, []}, fn value, {:ok, acc} ->
-      case cast_fun.(value) do
-        {:ok, cast} -> {:cont, {:ok, [cast | acc]}}
+      case fun.(value) do
+        {:ok, mapped} -> {:cont, {:ok, [mapped | acc]}}
         _ -> {:halt, :error}
       end
     end)
@@ -528,34 +226,62 @@ defmodule TP do
     end
   end
 
-  defp encode(nil, _type), do: nil
-  defp encode(%DateTime{} = datetime, :datetime), do: DateTime.to_iso8601(datetime)
-  defp encode(datetimes, {:array, :datetime}), do: Enum.map(datetimes, &DateTime.to_iso8601/1)
-  defp encode(bytes, :bytes), do: Base.encode64(bytes)
+  defp encode(string, :string) when is_binary(string), do: {:ok, string}
+  defp encode(int, :int) when is_integer(int) and int >= @int_min and int <= @int_max, do: {:ok, int}
+  defp encode(uint, :uint) when is_integer(uint) and uint >= 0 and uint <= @uint_max, do: {:ok, uint}
+  defp encode(float, :float) when is_number(float), do: {:ok, float / 1}
+  defp encode(bool, :bool) when is_boolean(bool), do: {:ok, bool}
 
-  # turbopuffer's compact vector encoding is base64 little-endian f32, whatever the schema's element type.
-  defp encode(vector, {:vector, _dims, _element}) do
-    Base.encode64(for value <- vector, into: <<>>, do: <<value::float-32-little>>)
+  # Ecto.UUID.cast also takes 16 raw bytes, which aren't a uuid string.
+  defp encode(uuid, :uuid) when is_binary(uuid) and byte_size(uuid) == 36, do: Ecto.UUID.cast(uuid)
+
+  defp encode(%DateTime{time_zone: "Etc/UTC"} = datetime, :datetime) do
+    {:ok, datetime |> DateTime.truncate(:millisecond) |> DateTime.to_iso8601()}
   end
 
-  defp encode(value, _type), do: value
+  defp encode(bytes, :bytes) when is_binary(bytes), do: {:ok, Base.encode64(bytes)}
 
-  defp load_value(base64, :bytes) when is_binary(base64), do: Base.decode64(base64)
-
-  defp load_value(values, {:array, :datetime}) when is_list(values) do
-    cast_list(values, fn
+  defp encode(values, {:array, element}) when is_list(values) do
+    map_ok(values, fn
       nil -> :error
-      value -> load_value(value, :datetime)
+      value -> encode(value, element)
     end)
   end
 
-  # Unlike writes, base64 vectors in query responses use the schema's element type.
+  # turbopuffer's compact vector encoding is base64 little-endian f32, whatever the schema's element type.
+  defp encode(values, {:vector, _, _} = type) do
+    with {:ok, vector} <- vector(values, type) do
+      {:ok, Base.encode64(for value <- vector, into: <<>>, do: <<value::float-32-little>>)}
+    end
+  end
+
+  defp encode(vectors, {:multi_vector, dims, element}) when is_list(vectors) do
+    map_ok(vectors, &vector(&1, {:vector, dims, element}))
+  end
+
+  defp encode(%{} = weights, {:sparse_vector, _}) when not is_struct(weights) do
+    with {:ok, pairs} <- map_ok(Map.to_list(weights), &weight(&1, false)), do: {:ok, Map.new(pairs)}
+  end
+
+  defp encode(_value, _type), do: :error
+
+  defp load_value(base64, :bytes) when is_binary(base64), do: Base.decode64(base64)
+
+  # query.md says base64 vectors in responses are little-endian f32, like writes, but turbopuffer sends each
+  # attribute's own element type: 2 bytes per f16 and 1 per i8.
   defp load_value(base64, {:vector, dims, element} = type) when is_binary(base64) do
-    with {:ok, binary} <- Base.decode64(base64),
-         true <- byte_size(binary) == dims * element_bytes(element) do
-      cast_vector(decode_elements(binary, element), type)
-    else
-      _ -> :error
+    case Base.decode64(base64) do
+      {:ok, binary} when byte_size(binary) == dims * 4 and element == :f32 ->
+        vector(for(<<value::float-32-little <- binary>>, do: value), type)
+
+      {:ok, binary} when byte_size(binary) == dims * 2 and element == :f16 ->
+        vector(for(<<value::float-16-little <- binary>>, do: value), type)
+
+      {:ok, binary} when byte_size(binary) == dims and element == :i8 ->
+        vector(for(<<value::signed-8 <- binary>>, do: value), type)
+
+      _ ->
+        :error
     end
   end
 
@@ -565,20 +291,12 @@ defmodule TP do
       value when is_float(value) and value == trunc(value) -> trunc(value)
       value -> value
     end)
-    |> cast_vector(type)
+    |> vector(type)
   end
 
   defp load_value(vectors, {:multi_vector, dims, element}) when is_list(vectors) do
-    cast_list(vectors, &load_value(&1, {:vector, dims, element}))
+    map_ok(vectors, &load_value(&1, {:vector, dims, element}))
   end
 
   defp load_value(value, type), do: cast_value(value, type)
-
-  defp element_bytes(:f32), do: 4
-  defp element_bytes(:f16), do: 2
-  defp element_bytes(:i8), do: 1
-
-  defp decode_elements(binary, :f32), do: for(<<value::float-32-little <- binary>>, do: value)
-  defp decode_elements(binary, :f16), do: for(<<value::float-16-little <- binary>>, do: value)
-  defp decode_elements(binary, :i8), do: for(<<value::signed-8 <- binary>>, do: value)
 end

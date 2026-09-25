@@ -1,0 +1,443 @@
+defmodule Ecto.Adapters.Turbopuffer.Expr do
+  @moduledoc false
+  # Compiles a planned query's expressions into turbopuffer's JSON: filters, rank_by scores, and values
+  # (docs/turbopuffer/query.md). The struct is the context: the query, its params, its TP.Namespace, which is nil
+  # when the query is schemaless, and whether it's a write condition, where `ref_new(field)` is the value written.
+
+  alias Ecto.Query.Tagged
+
+  @enforce_keys [:query, :params]
+  defstruct [:query, :params, :namespace, condition: false]
+
+  # ids can't be null, so no document matches this, and as a write condition it only matches ids not written yet.
+  @nothing ["id", "Eq", nil]
+  @everything ["id", "NotEq", nil]
+
+  @operators %{:== => "Eq", :!= => "NotEq", :< => "Lt", :<= => "Lte", :> => "Gt", :>= => "Gte"}
+  @negated %{:== => :!=, :!= => :==, :< => :>=, :<= => :>, :> => :<=, :>= => :<}
+  @flipped %{:== => :==, :!= => :!=, :< => :>, :<= => :>=, :> => :<, :>= => :<=}
+
+  def nothing, do: @nothing
+  def everything, do: @everything
+
+  @doc """
+  The query's wheres as one filter, or `true` or `false` when they're constant. The first where's `or` has
+  nothing to join, as in `from c in CardStack, or_where: c.id == ^id`.
+  """
+  def filters(%__MODULE__{query: %{wheres: []}}), do: true
+
+  def filters(%__MODULE__{query: %{wheres: [first | rest]}} = ctx) do
+    Enum.reduce(rest, filter(ctx, first.expr, false), fn %{op: op, expr: expr}, acc ->
+      junction(op, acc, filter(ctx, expr, false))
+    end)
+  end
+
+  @doc "A `filters` result as turbopuffer's filter, with `true` as `every`."
+  def filter_json(true, every), do: every
+  def filter_json(false, _every), do: @nothing
+  def filter_json(filter, _every), do: filter
+
+  @doc "Joins two filters, or `true`/`false`, with And or Or."
+  def junction(:and, false, _right), do: false
+  def junction(:and, _left, false), do: false
+  def junction(:and, true, right), do: right
+  def junction(:and, left, true), do: left
+  def junction(:or, true, _right), do: true
+  def junction(:or, _left, true), do: true
+  def junction(:or, false, right), do: right
+  def junction(:or, left, false), do: left
+  def junction(:and, left, right), do: combine("And", left, right)
+  def junction(:or, left, right), do: combine("Or", left, right)
+
+  @doc """
+  The query's order_bys as turbopuffer's rank_by, and the direction a cursor pages in when it orders by id alone.
+  """
+  def rank_by(%__MODULE__{query: %{order_bys: order_bys}} = ctx) do
+    case Enum.flat_map(order_bys, & &1.expr) do
+      [] ->
+        {["id", "asc"], :asc}
+
+      [{direction, expr}] ->
+        if field?(expr) do
+          {name, direction} = order(ctx, direction, expr)
+          {[name, Atom.to_string(direction)], if(name == "id", do: direction)}
+        else
+          {search(ctx, direction, expr), nil}
+        end
+
+      orders when length(orders) > 8 ->
+        error!(ctx, "turbopuffer orders by at most 8 attributes")
+
+      orders ->
+        ranks =
+          Enum.map(orders, fn {direction, expr} ->
+            unless field?(expr), do: error!(ctx, "turbopuffer can't combine a search with other orderings")
+            {name, direction} = order(ctx, direction, expr)
+            [name, Atom.to_string(direction)]
+          end)
+
+        {ranks, nil}
+    end
+  end
+
+  @doc """
+  A selected expression: `{:attribute, name}`, `{:literal, value}`, `:dist`, `{:compute, expr}` for a value
+  turbopuffer computes per row, or `{:match, expr}` for a filter it computes as 1 or 0.
+  """
+  def selected(ctx, expr) do
+    cond do
+      field?(expr) ->
+        {:attribute, name!(ctx, expr, nil)}
+
+      literal?(expr) ->
+        {:literal, value(ctx, expr)}
+
+      filter?(ctx, expr) ->
+        {:match, filter_score!(ctx, expr)}
+
+      true ->
+        case operator(ctx, expr) do
+          {%{role: :dist}, []} -> :dist
+          {%{role: :highlight} = op, args} -> {:compute, compile(ctx, op, args)}
+          _ -> {:compute, ctx |> score(expr, :select) |> elem(0)}
+        end
+    end
+  end
+
+  @doc "Whether an expression is a field of the query's source."
+  def field?({{:., _, [{:&, _, [_]}, field]}, _, []}) when is_atom(field), do: true
+  def field?(_expr), do: false
+
+  @doc """
+  The attribute name of a field, after checking the attribute has `capability` (any when nil). Schemaless
+  queries have no attributes to check, so their field names go as they are.
+  """
+  def name!(ctx, {{:., _, [{:&, _, [0]}, field]}, _, []}, capability) when is_atom(field) do
+    name = Atom.to_string(field)
+
+    with %TP.Namespace{} = namespace <- ctx.namespace do
+      attribute =
+        namespace.by_name[name] || error!(ctx, "#{inspect(namespace.module)} has no field #{inspect(name)}")
+
+      if message = capability && TP.Attribute.missing(attribute, capability) do
+        error!(ctx, "#{message} in #{inspect(namespace.module)}")
+      end
+    end
+
+    name
+  end
+
+  def name!(ctx, expr, _capability), do: error!(ctx, "expected a field, got: #{Macro.to_string(expr)}")
+
+  @doc "A literal or parameter's value."
+  def value(ctx, {:^, _, [ix]}), do: Enum.at(ctx.params, ix)
+  def value(ctx, {:^, _, [ix, count]}), do: Enum.slice(ctx.params, ix, count)
+  def value(ctx, %Tagged{value: value}), do: value(ctx, value)
+  def value(ctx, list) when is_list(list), do: Enum.map(list, &value(ctx, &1))
+
+  def value(_ctx, literal) when is_number(literal) or is_binary(literal) or is_boolean(literal) or is_nil(literal),
+    do: literal
+
+  def value(ctx, expr) do
+    case operator(ctx, expr) do
+      {%{role: :ref_new}, [field]} when ctx.condition -> %{"$ref_new" => name!(ctx, field, nil)}
+      {%{role: :ref_new}, _} -> error!(ctx, "ref_new/1 is the value being written, so it only works in :replace_if")
+      _ -> error!(ctx, "turbopuffer can't use #{Macro.to_string(expr)} as a value")
+    end
+  end
+
+  @doc "Raises an `Ecto.QueryError` for the query, or the query of a context."
+  def error!(%__MODULE__{query: query}, message), do: error!(query, message)
+  def error!(%Ecto.Query{} = query, message), do: raise(Ecto.QueryError, query: query, message: message)
+
+  # ------------------------------------------------------------------------------------------------
+  # filters
+  # ------------------------------------------------------------------------------------------------
+
+  # `negate` pushes `not` down to the comparisons, so that ordering comparisons never match null (see below).
+  defp filter(ctx, {:and, _, [left, right]}, negate) do
+    junction(if(negate, do: :or, else: :and), filter(ctx, left, negate), filter(ctx, right, negate))
+  end
+
+  defp filter(ctx, {:or, _, [left, right]}, negate) do
+    junction(if(negate, do: :and, else: :or), filter(ctx, left, negate), filter(ctx, right, negate))
+  end
+
+  defp filter(ctx, {:not, _, [expr]}, negate), do: filter(ctx, expr, not negate)
+
+  defp filter(ctx, {:is_nil, _, [field]}, negate) do
+    [name!(ctx, field, :filter), if(negate, do: "NotEq", else: "Eq"), nil]
+  end
+
+  defp filter(ctx, {op, _, [left, right]}, negate) when is_map_key(@operators, op) do
+    op = if negate, do: @negated[op], else: op
+
+    cond do
+      field?(left) and field?(right) -> error!(ctx, "turbopuffer filters compare a field to a value, not another field")
+      field?(left) -> compare(name!(ctx, left, :filter), op, value(ctx, right))
+      field?(right) -> compare(name!(ctx, right, :filter), @flipped[op], value(ctx, left))
+      true -> error!(ctx, "turbopuffer filters compare a field to a value")
+    end
+  end
+
+  defp filter(ctx, {:in, _, [left, right]}, negate) do
+    cond do
+      field?(left) -> [name!(ctx, left, :filter), if(negate, do: "NotIn", else: "In"), List.wrap(value(ctx, right))]
+      field?(right) -> [name!(ctx, right, :filter), if(negate, do: "NotContains", else: "Contains"), value(ctx, left)]
+      true -> error!(ctx, "turbopuffer `in` filters need a field")
+    end
+  end
+
+  defp filter(ctx, {like, _, [field, pattern]}, negate) when like in [:like, :ilike] do
+    op = if like == :like, do: "Glob", else: "IGlob"
+    [name!(ctx, field, :glob), if(negate, do: "Not" <> op, else: op), glob!(ctx, value(ctx, pattern))]
+  end
+
+  # `dynamic(true)`, the usual seed for building filters up, arrives as a literal.
+  defp filter(ctx, expr, negate) do
+    if literal?(expr) do
+      case value(ctx, expr) do
+        boolean when is_boolean(boolean) -> boolean != negate
+        other -> error!(ctx, "turbopuffer can't filter by #{inspect(other)}")
+      end
+    else
+      filter =
+        case operator(ctx, expr) do
+          {%{role: :filter} = op, args} -> call(ctx, op, args)
+          _ -> error!(ctx, "turbopuffer can't filter by #{Macro.to_string(expr)}")
+        end
+
+      if negate, do: ["Not", filter], else: filter
+    end
+  end
+
+  defp filter?(ctx, expr) do
+    case expr do
+      {op, _, [_, _]} when is_map_key(@operators, op) -> true
+      {op, _, _} when op in [:and, :or, :not, :is_nil, :in, :like, :ilike] -> true
+      _ -> match?({%{role: :filter}, _}, operator(ctx, expr))
+    end
+  end
+
+  # turbopuffer's Lt and Lte match null, and its Gt and Gte don't. SQL's comparisons never match null, and these
+  # follow SQL, so `not (x > 1)` excludes nulls just like `x <= 1`.
+  defp compare(name, op, value) when op in [:<, :<=],
+    do: ["And", [[name, @operators[op], value], [name, "NotEq", nil]]]
+
+  defp compare(name, op, value), do: [name, @operators[op], value]
+
+  # SQL's % and _ become glob's * and ?, and glob's own metacharacters match literally.
+  defp glob!(_ctx, pattern) when is_binary(pattern), do: pattern |> String.graphemes() |> like_to_glob([])
+  defp glob!(ctx, pattern), do: error!(ctx, "like and ilike need a pattern string, got: #{inspect(pattern)}")
+
+  defp like_to_glob(["\\", char | rest], acc), do: like_to_glob(rest, [escape_glob(char) | acc])
+  defp like_to_glob(["%" | rest], acc), do: like_to_glob(rest, ["*" | acc])
+  defp like_to_glob(["_" | rest], acc), do: like_to_glob(rest, ["?" | acc])
+  defp like_to_glob([char | rest], acc), do: like_to_glob(rest, [escape_glob(char) | acc])
+  defp like_to_glob([], acc), do: acc |> Enum.reverse() |> Enum.join()
+
+  defp escape_glob(char) when char in ["*", "?", "[", "]", "{", "}", "\\"], do: "[" <> char <> "]"
+  defp escape_glob(char), do: char
+
+  # ------------------------------------------------------------------------------------------------
+  # scores
+  # ------------------------------------------------------------------------------------------------
+
+  defp order(ctx, direction, field), do: {name!(ctx, field, :filter), direction!(ctx, direction)}
+
+  defp direction!(_ctx, direction) when direction in [:asc, :asc_nulls_first], do: :asc
+  defp direction!(_ctx, direction) when direction in [:desc, :desc_nulls_last], do: :desc
+
+  defp direction!(ctx, direction) do
+    error!(ctx, "turbopuffer sorts nulls first ascending and last descending, so it can't order #{direction}")
+  end
+
+  defp search(ctx, direction, expr) do
+    {rank, natural} = score(ctx, expr, :rank)
+
+    if direction!(ctx, direction) != natural do
+      message =
+        if natural == :asc,
+          do: "vector search ranks the closest vectors first, so order it asc",
+          else: "turbopuffer ranks the highest scores first, so order it desc"
+
+      error!(ctx, message)
+    end
+
+    rank
+  end
+
+  # A score's JSON and the direction it ranks best first in, for ranking (`:rank`) or computing per row (`:select`).
+  defp score(ctx, {:+, _, [left, right]}, mode), do: combine_scores(ctx, "Sum", left, right, mode)
+
+  defp score(ctx, {:*, _, [left, right]} = expr, mode) do
+    {weight, score} =
+      cond do
+        literal?(left) -> {left, right}
+        literal?(right) -> {right, left}
+        true -> error!(ctx, "turbopuffer can only multiply a score by a number, not #{Macro.to_string(expr)}")
+      end
+
+    {rank, direction} = score(ctx, score, mode)
+    {["Product", value(ctx, weight), rank], direction}
+  end
+
+  defp score(ctx, expr, mode) do
+    case operator(ctx, expr) do
+      {%{role: :max}, [left, right]} ->
+        combine_scores(ctx, "Max", left, right, mode)
+
+      {%{role: :transform} = op, [inner, midpoint | exponent]} ->
+        case score(ctx, inner, mode) do
+          {inner, :desc} ->
+            options = Map.merge(%{"midpoint" => value(ctx, midpoint)}, exponent(ctx, exponent))
+            {[op.op, inner, options], :desc}
+
+          _ ->
+            error!(ctx, "turbopuffer can't #{String.downcase(op.op)} a vector distance")
+        end
+
+      {%{role: {:score, direction}} = op, args} when mode == :rank or op.select ->
+        {compile(ctx, op, args), direction}
+
+      {%{role: {:score, _}} = op, _args} ->
+        error!(ctx, "turbopuffer can't compute #{op.op} per row; select vector_distance(field, vector) instead")
+
+      {%{select: true, role: nil} = op, args} when mode == :select ->
+        {compile(ctx, op, args), :asc}
+
+      _ ->
+        if filter?(ctx, expr), do: {filter_score!(ctx, expr), :desc}, else: not_a_score!(ctx, expr, mode)
+    end
+  end
+
+  defp exponent(_ctx, []), do: %{}
+  defp exponent(ctx, [exponent]), do: %{"exponent" => value(ctx, exponent)}
+
+  # A filter scores 1 where it matches and 0 elsewhere.
+  defp filter_score!(ctx, expr) do
+    case filter(ctx, expr, false) do
+      constant when is_boolean(constant) -> error!(ctx, "turbopuffer can't score by #{Macro.to_string(expr)}")
+      filter -> filter
+    end
+  end
+
+  defp not_a_score!(ctx, expr, :rank), do: error!(ctx, "turbopuffer can't rank by #{Macro.to_string(expr)}")
+  defp not_a_score!(ctx, expr, :select), do: error!(ctx, "turbopuffer can't select #{Macro.to_string(expr)}")
+
+  # Max takes numbers too, as in max_score(0, attribute(c.delta)); Sum doesn't.
+  defp combine_scores(ctx, op, left, right, mode) do
+    case {operand(ctx, op, left, mode), operand(ctx, op, right, mode)} do
+      {{_, nil}, {_, nil}} ->
+        error!(ctx, "turbopuffer can't take the #{op} of two numbers")
+
+      {{left, direction}, {right, other}} when direction == other or direction == nil or other == nil ->
+        {combine(op, left, right), direction || other}
+
+      _ ->
+        error!(ctx, "turbopuffer can't combine scores that rank in different directions")
+    end
+  end
+
+  defp operand(ctx, "Max", expr, mode) do
+    if literal?(expr) and is_number(value(ctx, expr)), do: {value(ctx, expr), nil}, else: score(ctx, expr, mode)
+  end
+
+  defp operand(ctx, _op, expr, mode), do: score(ctx, expr, mode)
+
+  # ------------------------------------------------------------------------------------------------
+  # helpers
+  # ------------------------------------------------------------------------------------------------
+
+  # A TP.Query operator's JSON, given its arguments.
+  defp compile(ctx, %{op: "Attribute"}, [field]) do
+    name = name!(ctx, field, :rank)
+
+    # turbopuffer ranks only scores of at least 0, and rejects a signed attribute that isn't wrapped this way.
+    case attribute_type(ctx, name) do
+      :datetime -> error!(ctx, "attribute/1 scores numbers, so score a datetime with distance/2")
+      signed when signed in [:int, :float] -> ["Max", [0, ["Attribute", name]]]
+      _ -> ["Attribute", name]
+    end
+  end
+
+  defp compile(ctx, %{op: "Dist"}, [field, origin]) do
+    name = name!(ctx, field, :rank)
+    ["Dist", ["Attribute", name], dump(ctx, name, value(ctx, origin))]
+  end
+
+  defp compile(ctx, %{op: "Highlight"} = op, [field | options]) do
+    [op.op, name!(ctx, field, op.needs) | Enum.map(options, &value(ctx, &1))]
+  end
+
+  defp compile(ctx, op, args), do: call(ctx, op, args)
+
+  defp attribute_type(%{namespace: nil}, _name), do: nil
+  defp attribute_type(%{namespace: namespace}, name), do: namespace.by_name[name].type
+
+  # A value in the attribute's own encoding, like a datetime's ISO 8601 string.
+  defp dump(%{namespace: nil}, _name, %DateTime{} = datetime), do: DateTime.to_iso8601(datetime)
+  defp dump(%{namespace: nil}, _name, value), do: value
+
+  defp dump(%{namespace: namespace} = ctx, name, value) do
+    case Ecto.Type.dump({:parameterized, {TP, namespace.by_name[name]}}, value) do
+      {:ok, dumped} -> dumped
+      :error -> error!(ctx, "#{inspect(value)} isn't a #{TP.Types.encode(namespace.by_name[name].type)}")
+    end
+  end
+
+  # An operator on a field, like ["title", "Fuzzy", "text", options].
+  defp call(ctx, op, [field, query | options]) do
+    {query, needs} =
+      cond do
+        op.vector_query ->
+          vector_query(ctx, op, query)
+
+        match?({%{role: :embed}, _}, operator(ctx, query)) ->
+          error!(ctx, "turbopuffer only embeds text for ann and knn")
+
+        true ->
+          {value(ctx, query), op.needs}
+      end
+
+    options = if options == [] and op.defaults, do: [op.defaults], else: Enum.map(options, &value(ctx, &1))
+    [name!(ctx, field, needs), op.op, query | options]
+  end
+
+  # A literal vector, or `embed(text)` for turbopuffer to embed, which needs an embedded attribute, or a model to
+  # rank a vector attribute.
+  defp vector_query(ctx, op, expr) do
+    case operator(ctx, expr) do
+      nil -> {value(ctx, expr), op.needs}
+      {%{role: :embed}, [text]} -> {["Embed", value(ctx, text)], :embed}
+      {%{role: :embed}, [text, model]} -> {["Embed", value(ctx, text), %{"model" => value(ctx, model)}], :embed_model}
+      _ -> error!(ctx, "expected a vector or embed(text), got: #{Macro.to_string(expr)}")
+    end
+  end
+
+  # A TP.Query operator and its arguments, or nil when the expression isn't a keyword fragment.
+  defp operator(ctx, {:fragment, _, [[{key, args}]]} = expr) when is_atom(key) and is_list(args) do
+    case TP.Query.__operator__(key) do
+      %{arities: arities} = op -> if length(args) in arities, do: {op, args}, else: bad_arity!(ctx, expr)
+      nil -> error!(ctx, "turbopuffer has no operator #{inspect(key)} in #{Macro.to_string(expr)}")
+    end
+  end
+
+  defp operator(ctx, {:fragment, _, [{:raw, _} | _]}) do
+    error!(ctx, "turbopuffer can't run string fragments; TP.Query's operators are keyword fragments")
+  end
+
+  defp operator(_ctx, _expr), do: nil
+
+  defp bad_arity!(ctx, expr), do: error!(ctx, "wrong number of arguments in #{Macro.to_string(expr)}")
+
+  # Joins two filters or scores under `op`, flattening either side that already uses it.
+  defp combine(op, left, right), do: [op, terms(op, left) ++ terms(op, right)]
+
+  defp terms(op, [op, terms]), do: terms
+  defp terms(_op, expr), do: [expr]
+
+  defp literal?(%Tagged{}), do: true
+  defp literal?({:^, _, _}), do: true
+  defp literal?(value), do: is_number(value) or is_binary(value) or is_boolean(value) or is_nil(value)
+end
