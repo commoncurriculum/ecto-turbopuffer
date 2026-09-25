@@ -72,6 +72,12 @@ defmodule Ecto.Adapters.Turbopuffer.TypesTest do
   end
 
   defp attribute_mismatches(attribute, entry, namespace, label) do
+    # turbopuffer reports word_v0, its first tokenizer, by its original name.
+    entry =
+      if match?(%{"full_text_search" => %{"tokenizer" => "Word"}}, entry),
+        do: put_in(entry, ["full_text_search", "tokenizer"], "word_v0"),
+        else: entry
+
     options =
       for {option, declared} <- Map.delete(TP.Attribute.to_schema(attribute), "type") do
         # An embedding model given as a string comes back as its model and target attribute.
