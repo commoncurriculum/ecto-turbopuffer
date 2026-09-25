@@ -51,6 +51,13 @@ defmodule Ecto.Adapters.Turbopuffer.WritesTest do
       end
     end
 
+    test "stores uuid ids lowercased, however they're written" do
+      Repo.insert!(%Lesson{id: "769C134D-07B8-4225-954A-B6CC5FFC320C", markdown: "Fractions on a number line."})
+
+      assert Repo.get!(Lesson, "769c134d-07b8-4225-954a-b6cc5ffc320c").markdown == "Fractions on a number line."
+      assert Repo.get!(Lesson, "769C134D-07B8-4225-954A-B6CC5FFC320C").id == "769c134d-07b8-4225-954a-b6cc5ffc320c"
+    end
+
     test "autogenerates uuid ids and lets native embedding fill vectors" do
       lessons =
         for markdown <- [
@@ -148,6 +155,19 @@ defmodule Ecto.Adapters.Turbopuffer.WritesTest do
 
       assert_raise Ecto.StaleEntryError, fn -> Repo.update(Ecto.Changeset.change(stack, title: "Decimals")) end
     end
+
+    test "checks an optimistic lock, and raises when someone else changed it" do
+      stack = Repo.insert!(card_stack("a"))
+      locked = fn changes -> stack |> Ecto.Changeset.change(changes) |> Ecto.Changeset.optimistic_lock(:position) end
+
+      assert {:ok, %{position: 2}} = Repo.update(locked.(title: "Decimals"))
+      assert Repo.get!(CardStack, "a").position == 2
+
+      # The struct still says position 1, so the lock doesn't match.
+      assert_raise Ecto.StaleEntryError, fn -> Repo.update(locked.(title: "Ratios")) end
+      assert_raise Ecto.StaleEntryError, fn -> Repo.delete(Ecto.Changeset.optimistic_lock(stack, :position)) end
+      assert Repo.get!(CardStack, "a").title == "Decimals"
+    end
   end
 
   describe "delete" do
@@ -181,6 +201,14 @@ defmodule Ecto.Adapters.Turbopuffer.WritesTest do
 
       assert Repo.delete_all(CardStack) == {1, nil}
       assert ids(CardStack) == []
+    end
+
+    test "a leading or_where only touches what it matches" do
+      assert Repo.update_all(from(c in CardStack, or_where: c.id == "a"), set: [title: "Moved"]) == {1, nil}
+      assert ids(from c in CardStack, where: c.title == "Moved") == ~w(a)
+
+      assert Repo.delete_all(from c in CardStack, or_where: c.id == "c") == {1, nil}
+      assert ids(CardStack) == ~w(a b)
     end
 
     test "can't patch vectors by filter" do

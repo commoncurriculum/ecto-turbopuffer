@@ -101,6 +101,17 @@ defmodule Ecto.Adapters.Turbopuffer.QueryTest do
       assert ids(query) == ~w(fractions revolution)
     end
 
+    test "a leading or_where filters, and not distributes over and" do
+      assert ids(from c in CardStack, or_where: c.id == "cells") == ~w(cells)
+
+      query = Enum.reduce(~w(cells revolution), CardStack, fn id, query -> or_where(query, [c], c.id == ^id) end)
+      assert ids(query) == ~w(cells revolution)
+
+      # != matches nil, so fractions, with no planbook, is in.
+      assert ids(from c in CardStack, where: not (c.planbook_id == "science" and c.position > 1)) ==
+               ~w(fractions photosynthesis revolution)
+    end
+
     test "arrays" do
       assert ids(from c in CardStack, where: contains(c.standard_ids, "LS1.C")) == ~w(cells photosynthesis)
       assert ids(from c in CardStack, where: contains(c.standard_ids, ^"LS1.B")) == ~w(cells)
@@ -108,12 +119,33 @@ defmodule Ecto.Adapters.Turbopuffer.QueryTest do
 
       assert ids(from c in CardStack, where: contains_any(c.standard_ids, ^["LS1.B", "3.NF.A.1"])) ==
                ~w(cells fractions)
+
+      assert ids(from c in CardStack, where: any_gte(c.standard_ids, "LS1.C")) == ~w(cells photosynthesis)
+
+      # Ecto only allows `value in field` on its own array types, so a schemaless query shows Contains/NotContains.
+      schemaless = fn where -> Repo.all(from(c in "card_stacks", select: c.id, order_by: c.id) |> where(^where)) end
+      assert schemaless.(dynamic([c], "LS1.B" in c.standard_ids)) == ~w(cells)
+      assert schemaless.(dynamic([c], "LS1.C" not in c.standard_ids)) == ~w(fractions revolution)
     end
 
     test "like and ilike become globs" do
       assert ids(from c in CardStack, where: like(c.title, "Photo%")) == ~w(photosynthesis)
       assert ids(from c in CardStack, where: ilike(c.title, ^"%REVOLUTION")) == ~w(revolution)
       assert ids(from c in CardStack, where: like(c.title, "Fraction_")) == ~w(fractions)
+      assert ids(from c in CardStack, where: not like(c.title, "Photo%")) == ~w(cells fractions revolution)
+      assert ids(from c in CardStack, where: like(c.id, "photo%")) == ~w(photosynthesis)
+      assert ids(from c in CardStack, where: iglob(c.title, "the french*")) == ~w(revolution)
+    end
+
+    test "regex" do
+      vectors = %{embedding: [1.0, 0.0, 0.0], half_embedding: [1.0, 0.0], small_embedding: [1, 0]}
+
+      Repo.insert_all(Everything, [
+        Map.merge(vectors, %{id: "a", title: "Photosynthesis in plants"}),
+        Map.merge(vectors, %{id: "b", title: "Cell division"})
+      ])
+
+      assert ids(from e in Everything, where: regex(e.title, "^Photo.*plants$")) == ~w(a)
     end
 
     test "text filters" do
@@ -252,6 +284,10 @@ defmodule Ecto.Adapters.Turbopuffer.QueryTest do
         from c in CardStack, order_by: [desc: max_score(bm25(c.title, "cell"), bm25(c.markdown, "bastille"))], limit: 2
 
       assert Enum.sort(ids(query)) == ~w(cells revolution)
+
+      # last_as_prefix makes the last word match as a prefix, for type-ahead.
+      query = from c in CardStack, order_by: [desc: bm25(c.markdown, ^"mito", ^%{last_as_prefix: true})], limit: 1
+      assert ids(query) == ~w(cells)
     end
 
     test "bm25 in a select computes the score without ranking by it" do
@@ -328,6 +364,15 @@ defmodule Ecto.Adapters.Turbopuffer.QueryTest do
       top = fn weights -> Repo.all(union_all(text, ^vector), rerank_by: {:rrf, weights: weights, limit: 1}) end
       assert Enum.map(top.([5, 1]), & &1.id) == ~w(photosynthesis)
       assert Enum.map(top.([1, 5]), & &1.id) == ~w(revolution)
+
+      # Each row scores weight / (rank_constant + rank), and offset skips the first fused row.
+      fused =
+        Repo.all(union_all(scored.(text), ^scored.(vector)),
+          rerank_by: {:rrf, weights: [2, 1], rank_constant: 10, limit: 1, offset: 1}
+        )
+
+      assert [{"revolution", second}] = fused
+      assert_in_delta second, 1 / 11, 0.0001
 
       assert_raise ArgumentError, ~r/unknown keys \[:wieghts\]/, fn ->
         Repo.all(union_all(text, ^vector), rerank_by: {:rrf, wieghts: [1, 5]})
