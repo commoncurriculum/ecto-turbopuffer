@@ -77,6 +77,22 @@ defmodule Ecto.Adapters.Turbopuffer.QueryTest do
       assert ids(from e in Everything, order_by: [desc: e.updated_at], limit: 1) == ~w(new)
     end
 
+    test "ordering comparisons never match nil, and != does" do
+      Repo.insert!(%CardStack{id: "unpositioned", vector: [1.0, 0.0, 0.0]})
+
+      assert ids(from c in CardStack, where: c.position < 3) == ~w(cells photosynthesis)
+      assert ids(from c in CardStack, where: c.position <= 2) == ~w(cells photosynthesis)
+      assert ids(from c in CardStack, where: not (c.position > 2)) == ~w(cells photosynthesis)
+      assert ids(from c in CardStack, where: not (c.position >= 3)) == ~w(cells photosynthesis)
+      assert ids(from c in CardStack, where: c.position > 3) == ~w(fractions)
+      assert ids(from c in CardStack, where: c.position != 1) == ~w(cells fractions revolution unpositioned)
+    end
+
+    test "dynamic(true) seeds a filter" do
+      filter = dynamic([c], ^dynamic(true) and c.planbook_id == ^"science")
+      assert ids(from c in CardStack, where: ^filter) == ~w(cells photosynthesis)
+    end
+
     test "and, or, and not" do
       query = from c in CardStack, where: c.planbook_id == "history" or (c.position == 1 and not (c.title == "Cells"))
       assert ids(query) == ~w(photosynthesis revolution)
@@ -189,8 +205,8 @@ defmodule Ecto.Adapters.Turbopuffer.QueryTest do
       assert Repo.aggregate(from(c in CardStack, where: c.planbook_id == "science"), :count, :id) == 2
       assert Repo.aggregate(CardStack, :sum, :position) == 10
 
-      assert Repo.all(from c in CardStack, group_by: c.planbook_id, select: {c.planbook_id, count(), sum(c.position)})
-             |> Enum.sort() == [{nil, 1, 4}, {"history", 1, 3}, {"science", 2, 3}]
+      query = from c in CardStack, group_by: c.planbook_id, select: {c.planbook_id, count(), sum(c.position)}, limit: 10
+      assert Enum.sort(Repo.all(query)) == [{nil, 1, 4}, {"history", 1, 3}, {"science", 2, 3}]
 
       assert Repo.exists?(from c in CardStack, where: c.planbook_id == "history")
       refute Repo.exists?(from c in CardStack, where: c.planbook_id == "art")
@@ -301,6 +317,9 @@ defmodule Ecto.Adapters.Turbopuffer.QueryTest do
       vector = from c in CardStack, order_by: ann(c.vector, ^[0.0, 0.0, 1.0]), limit: 1
 
       assert ids(union_all(text, ^vector)) == ~w(photosynthesis revolution)
+
+      assert Repo.all(union_all(select(text, [c], {c.id, c.title}), ^select(vector, [c], {c.id, c.planbook_id}))) ==
+               [{"photosynthesis", "Photosynthesis"}, {"revolution", "history"}]
 
       scored = fn query -> select(query, [c], {c.id, dist()}) end
       assert [{_, rrf} | _] = Repo.all(union_all(scored.(text), ^scored.(vector)), rerank_by: :rrf)

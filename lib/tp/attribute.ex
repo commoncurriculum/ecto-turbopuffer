@@ -1,21 +1,26 @@
 defmodule TP.Attribute do
   @moduledoc """
-  A `TP` field's turbopuffer attribute: its name, type, and entry in the namespace schema. `TP.attributes/1` lists a
-  schema's attributes.
+  A `TP` field's turbopuffer attribute, built when the schema compiles. `TP.Namespace` collects a schema's.
 
   Options mirror https://turbopuffer.com/docs/write#schema:
 
-    * `:filterable` - boolean
+    * `:filterable` - boolean. Defaults to true, except that full-text search and pattern indexes turn it off.
+      bytes and vectors can't be filterable.
     * `:regex` - boolean, `string` only
-    * `:glob`, `:fuzzy` - boolean, `string`/`[]string` only
+    * `:glob`, `:fuzzy` - boolean, `string` and `[]string`
     * `:full_text_search` - boolean or keyword list of `:tokenizer`, `:language`, `:stemming`,
-      `:remove_stopwords`, `:case_sensitive`, `:ascii_folding`, `:max_token_length`, `:k1`, `:b`, `:k3`.
-      The `pre_tokenized_array` tokenizer needs `[]string` and rejects the language settings.
-    * `:ann` - boolean or keyword list of `:distance_metric`, `:late_interaction`; required on `[N]` vectors
-    * `:sparse_knn` - keyword list with `:distance_metric`, `{}f16` only
-    * `:embed` - model name or keyword list of `:model`, `:attribute`, `:dims`, `:dtype`, `string` only
+      `:remove_stopwords`, `:case_sensitive`, `:ascii_folding`, `:max_token_length`, `:k1`, `:b`, `:k3`;
+      `string` and `[]string`. The `pre_tokenized_array` tokenizer needs `[]string` and rejects the language settings.
+    * `:ann` - `true`, required on `[N]` vectors. `[late_interaction: true]` on `[][N]` multi-vectors, or `false` to
+      store them without an index. `use TP, distance_metric:` sets the namespace's distance metric.
+    * `:sparse_knn` - `[distance_metric: :dot_product]`, `{}f16` only
+    * `:embed` - model name or keyword list of `:model`, `:attribute`, `:dims`, `:dtype`, `string` only.
+      turbopuffer stores the vector in `:attribute`, `embed_<name>` by default.
+
+  `capabilities` lists what queries can do with the attribute, and `missing/2` says why one isn't allowed.
   """
 
+  # Ecto passes every field option to TP.init/1, not just TP's.
   @ecto_field_options [
     :default,
     :source,
@@ -36,251 +41,253 @@ defmodule TP.Attribute do
     :schema
   ]
 
-  @tp_options [:type, :filterable, :regex, :glob, :fuzzy, :full_text_search, :ann, :sparse_knn, :embed]
+  @options [:filterable, :regex, :glob, :fuzzy, :full_text_search, :ann, :sparse_knn, :embed]
+
+  # The options each kind of type takes. Scalars other than strings and bytes, and their arrays, can only be filterable.
+  @supported %{
+    string: [:filterable, :regex, :glob, :fuzzy, :full_text_search, :embed],
+    string_array: [:filterable, :glob, :fuzzy, :full_text_search],
+    vector: [:ann],
+    multi_vector: [:ann],
+    sparse_vector: [:sparse_knn],
+    bytes: [],
+    other: [:filterable]
+  }
+  @kind_names [
+    string: "string",
+    string_array: "[]string",
+    vector: "[N] vector",
+    multi_vector: "[][N] multi-vector",
+    sparse_vector: "{}f16"
+  ]
 
   @tokenizers ~w(word_v4 word_v3 word_v2 word_v1 word_v0 pre_tokenized_array)
   @languages ~w(arabic danish dutch english finnish french german greek hungarian italian norwegian portuguese
                 romanian russian spanish swedish tamil turkish)
-  @distance_metrics ~w(cosine_distance euclidean_squared)
-  @sparse_distance_metrics ~w(dot_product)
   @embed_dtypes ~w(f32 f16 i8)
   @id_types [:string, :uint, :uuid]
   @max_name_bytes 128
 
-  @enforce_keys [:name, :type, :schema_entry, :filterable]
-  defstruct [:field, :name, :type, :schema_entry, :filterable, primary_key: false]
+  @enforce_keys [:field, :name, :type]
+  defstruct [:field, :name, :type, :embed, primary_key: false, filterable: false, capabilities: [], options: %{}]
 
+  @typedoc """
+  What a query can do with an attribute: filter it (`:filter`), match it with a pattern or text index (`:glob`,
+  `:regex`, `:fuzzy`, `:full_text_search`), rank it by vector (`:ann` with an index, `:vector` exactly), by
+  embedded text (`:embed`) or sparse vector (`:sparse_knn`), or patch it in place (`:patch`).
+  """
+  @type capability ::
+          :filter | :glob | :regex | :fuzzy | :full_text_search | :ann | :vector | :embed | :sparse_knn | :patch
+
+  @typedoc "Native embedding: turbopuffer embeds the attribute's text with `model` and stores the vector in `target`."
+  @type embed :: %{model: String.t(), target: String.t(), dims: pos_integer() | nil, dtype: String.t() | nil}
+
+  @typedoc "`options` holds the validated schema options, as turbopuffer's JSON values, for `to_schema/1`."
   @type t :: %__MODULE__{
-          field: atom() | nil,
+          field: atom(),
           name: String.t(),
           type: TP.Types.t(),
-          schema_entry: %{String.t() => term()},
+          primary_key: boolean(),
           filterable: boolean(),
-          primary_key: boolean()
+          capabilities: [capability()],
+          embed: embed() | nil,
+          options: %{atom() => term()}
         }
 
   @doc """
-  Builds the attribute from a `TP` field's options. Raises `ArgumentError` when an option is invalid.
+  Builds the attribute from a `TP` field's options, which include Ecto's `:field`. Raises `ArgumentError` when an
+  option is unknown, malformed, or not supported by the type.
   """
   @spec new(keyword()) :: t()
   def new(opts) do
-    type =
-      case Keyword.fetch(opts, :type) do
-        {:ok, type} -> TP.Types.decode(type)
-        :error -> raise ArgumentError, "TP fields need a turbopuffer `type:`, e.g. `type: \"string\"`"
-      end
-
-    entry = schema_entry(type, opts)
+    type = type!(opts)
+    primary_key = opts[:primary_key] == true
+    name = name!(opts, type, primary_key)
+    options = options!(opts, type, primary_key)
+    filterable = not primary_key and filterable?(type, options)
+    embed = embed(options[:embed], name)
 
     %__MODULE__{
       field: opts[:field],
-      name: name(opts),
+      name: name,
       type: type,
-      schema_entry: entry,
-      filterable: filterable?(type, entry),
-      primary_key: opts[:primary_key] == true
+      primary_key: primary_key,
+      filterable: filterable,
+      embed: embed,
+      options: options,
+      capabilities: capabilities(type, primary_key, filterable, options, embed)
     }
+  rescue
+    error in ArgumentError -> reraise ArgumentError, error.message <> location(opts), __STACKTRACE__
   end
 
   @doc """
-  Why turbopuffer can't patch the attribute in place, or `nil` when it can.
+  Why a query can't use the attribute for `capability`, or `nil` when it can.
   """
-  @spec patch_error(t()) :: String.t() | nil
-  def patch_error(%__MODULE__{primary_key: true}), do: "turbopuffer ids can't change"
-
-  def patch_error(%__MODULE__{type: type, schema_entry: entry}) do
-    if match?({kind, _, _} when kind in [:vector, :multi_vector], type) or Map.has_key?(entry, "embed") do
-      "turbopuffer can't patch vectors or the text it embeds, so upsert the whole document with " <>
-        "`on_conflict: :replace_all`"
-    end
+  @spec missing(t(), capability()) :: String.t() | nil
+  def missing(%__MODULE__{} = attribute, capability) do
+    unless capability in attribute.capabilities, do: requirement(attribute, capability)
   end
 
   @doc """
-  Returns the attribute's schema entry, e.g. `%{"type" => "string", "full_text_search" => true}`.
-  Raises `ArgumentError` when an option is unknown, malformed, or not supported by the type.
+  The attribute's entry in turbopuffer's namespace schema, e.g. `%{"type" => "string", "full_text_search" => true}`.
   """
-  @spec schema_entry(TP.Types.t(), keyword()) :: %{String.t() => term()}
-  def schema_entry(type, opts) do
-    where = location(opts)
-
-    case Enum.reject(Keyword.keys(opts), &(&1 in @tp_options or &1 in @ecto_field_options)) do
-      [] -> :ok
-      unknown -> raise ArgumentError, "unknown turbopuffer option(s) #{inspect(unknown)} #{where}"
-    end
-
-    validate_name!(opts, where)
-    if opts[:primary_key], do: validate_id!(type, opts, where)
-    validate_ann_present!(type, opts, where)
-
-    opts
-    |> Keyword.take(@tp_options -- [:type])
-    |> Enum.reduce(%{"type" => TP.Types.encode(type)}, fn {key, value}, entry ->
-      Map.put(entry, Atom.to_string(key), option!(key, value, type, where))
-    end)
+  @spec to_schema(t()) :: %{String.t() => term()}
+  def to_schema(%__MODULE__{} = attribute) do
+    Map.new(attribute.options, fn {key, value} -> {Atom.to_string(key), value} end)
+    |> Map.put("type", TP.Types.encode(attribute.type))
   end
 
-  @doc false
-  def distance_metrics, do: @distance_metrics
-
-  @doc """
-  Whether turbopuffer indexes the attribute for filtering and sorting. It defaults to true, except that
-  full-text search and pattern filters turn it off, and bytes and vectors can never be filtered.
-  """
-  @spec filterable?(TP.Types.t(), map()) :: boolean()
-  def filterable?(type, entry) do
-    cond do
-      type == :bytes or (is_tuple(type) and elem(type, 0) != :array) -> false
-      Map.has_key?(entry, "filterable") -> entry["filterable"]
-      true -> not Enum.any?(~w(full_text_search regex glob fuzzy), &(entry[&1] not in [nil, false]))
+  defp type!(opts) do
+    case Keyword.fetch(opts, :type) do
+      {:ok, type} -> TP.Types.decode(type)
+      :error -> raise ArgumentError, "TP fields need a turbopuffer `type:`, e.g. `type: \"string\"`"
     end
   end
 
-  defp name(opts), do: to_string(opts[:source] || opts[:field])
-
-  defp validate_name!(opts, where) do
-    name = name(opts)
+  defp name!(opts, type, primary_key) do
+    field = opts[:field] || raise ArgumentError, "TP needs the field's name; Ecto schemas pass it as `:field`"
+    name = to_string(opts[:source] || field)
 
     cond do
       String.starts_with?(name, "$") ->
-        raise ArgumentError, "turbopuffer reserves attribute names starting with $ #{where}"
+        raise ArgumentError, "turbopuffer reserves attribute names starting with $"
 
       byte_size(name) > @max_name_bytes ->
-        raise ArgumentError, "turbopuffer attribute names can be at most #{@max_name_bytes} bytes #{where}"
+        raise ArgumentError, "turbopuffer attribute names can be at most #{@max_name_bytes} bytes"
 
-      name == "id" and !opts[:primary_key] ->
-        raise ArgumentError, "turbopuffer reserves `id` for the primary key #{where}"
+      name == "id" and not primary_key ->
+        raise ArgumentError, "turbopuffer reserves `id` for the primary key"
+
+      primary_key and name != "id" ->
+        raise ArgumentError, "turbopuffer ids must be named `id` (add `source: :id` to keep the field name)"
+
+      primary_key and type not in @id_types ->
+        raise ArgumentError, "turbopuffer ids must be string, uint, or uuid; got #{TP.Types.encode(type)}"
+
+      opts[:autogenerate] == true and type != :uuid ->
+        raise ArgumentError, "TP can only autogenerate uuid values, not #{TP.Types.encode(type)}"
 
       true ->
-        :ok
+        name
     end
   end
 
-  defp validate_id!(type, opts, where) do
-    unless type in @id_types do
-      raise ArgumentError,
-            "turbopuffer ids must be string, uint, or uuid; got #{TP.Types.encode(type)} #{where}"
-    end
+  defp options!(opts, type, primary_key) do
+    options = Keyword.drop(opts, [:type | @ecto_field_options])
 
-    if name(opts) != "id" do
-      raise ArgumentError, "turbopuffer ids must be named `id` (add `source: :id` to keep the field name) #{where}"
-    end
-
-    case Keyword.take(opts, @tp_options -- [:type]) do
+    case Keyword.keys(options) -- @options do
       [] -> :ok
-      options -> raise ArgumentError, "the turbopuffer id can't take #{inspect(Keyword.keys(options))} #{where}"
-    end
-  end
-
-  defp validate_ann_present!({:vector, _, _} = type, opts, where) do
-    unless opts[:ann] do
-      raise ArgumentError, "#{TP.Types.encode(type)} attributes require `ann: true` (or ann options) #{where}"
-    end
-  end
-
-  defp validate_ann_present!(_type, _opts, _where), do: :ok
-
-  defp option!(:filterable, true, type, where) when type == :bytes or (is_tuple(type) and elem(type, 0) != :array) do
-    raise ArgumentError, "#{TP.Types.encode(type)} attributes can't be filterable #{where}"
-  end
-
-  defp option!(key, value, type, where) when key in [:filterable, :regex, :glob, :fuzzy] do
-    boolean!(key, value, where)
-
-    cond do
-      not value or key == :filterable -> :ok
-      key == :regex and type != :string -> raise ArgumentError, ":regex requires a string attribute #{where}"
-      true -> text_type!(key, type, where)
+      unknown -> raise ArgumentError, "unknown turbopuffer option(s) #{inspect(unknown)}"
     end
 
-    value
-  end
+    supported = if primary_key, do: [], else: Map.fetch!(@supported, kind(type))
 
-  defp option!(:full_text_search, value, type, where) do
-    text_type!(:full_text_search, type, where)
-
-    if is_boolean(value) do
-      value
-    else
-      value
-      |> full_text_search_config!(where)
-      |> validate_pre_tokenized!(type, where)
-    end
-  end
-
-  defp option!(:ann, value, {:vector, _, _} = type, where) do
-    case value do
-      true -> true
-      false -> raise ArgumentError, "#{TP.Types.encode(type)} attributes require `ann: true` #{where}"
-      config -> ann_config!(config, false, where)
-    end
-  end
-
-  defp option!(:ann, value, {:multi_vector, _, _} = type, where) do
-    case value do
-      false ->
-        false
-
-      true ->
-        raise ArgumentError,
-              "#{TP.Types.encode(type)} attributes need `ann: [late_interaction: true]` to build an index #{where}"
-
-      config ->
-        ann_config!(config, true, where)
-    end
-  end
-
-  defp option!(:sparse_knn, value, {:sparse_vector, _}, where) do
-    entry =
-      config!(:sparse_knn, value, where, fn
-        :distance_metric, v -> enum!(:distance_metric, v, @sparse_distance_metrics, where)
-        key, _ -> unknown_option!(:sparse_knn, key, where)
-      end)
-
-    unless Map.has_key?(entry, "distance_metric") do
-      raise ArgumentError, "sparse_knn requires :distance_metric #{where}"
+    for {key, _value} <- options, key not in supported do
+      raise ArgumentError, unsupported(key, type, primary_key)
     end
 
-    entry
+    if match?({:vector, _, _}, type) and not Keyword.has_key?(options, :ann) do
+      raise ArgumentError, "#{TP.Types.encode(type)} attributes require `ann: true`"
+    end
+
+    Map.new(options, fn {key, value} -> {key, option!(key, value, type)} end)
   end
 
-  defp option!(:embed, model, :string, where) when is_binary(model), do: nonempty_string!(:embed, model, where)
+  defp kind(:string), do: :string
+  defp kind({:array, :string}), do: :string_array
+  defp kind({:vector, _dims, _element}), do: :vector
+  defp kind({:multi_vector, _dims, _element}), do: :multi_vector
+  defp kind({:sparse_vector, _element}), do: :sparse_vector
+  defp kind(:bytes), do: :bytes
+  defp kind(_type), do: :other
 
-  defp option!(:embed, value, :string, where) do
-    entry =
-      config!(:embed, value, where, fn
-        key, v when key in [:model, :attribute] -> nonempty_string!(key, v, where)
-        :dims, v when is_integer(v) and v > 0 -> v
-        :dims, v -> invalid!(:dims, v, "a positive integer", where)
-        :dtype, v -> enum!(:dtype, v, @embed_dtypes, where)
-        key, _ -> unknown_option!(:embed, key, where)
-      end)
+  defp unsupported(key, _type, true), do: "turbopuffer ids can't take #{inspect(key)}"
+  defp unsupported(:filterable, type, false), do: "#{TP.Types.encode(type)} attributes can't be filterable"
 
-    unless Map.has_key?(entry, "model"), do: raise(ArgumentError, "embed requires :model #{where}")
-    entry
+  defp unsupported(key, type, false) do
+    kinds = for {kind, name} <- @kind_names, key in @supported[kind], do: name
+    "#{inspect(key)} requires a #{Enum.join(kinds, " or ")} attribute, not #{TP.Types.encode(type)}"
   end
 
-  defp option!(key, _value, type, where) when key in [:ann, :sparse_knn, :embed] do
-    raise ArgumentError, "#{inspect(key)} isn't supported on #{TP.Types.encode(type)} attributes #{where}"
-  end
+  defp option!(key, value, _type) when key in [:filterable, :regex, :glob, :fuzzy], do: boolean!(key, value)
+  defp option!(:full_text_search, value, _type) when is_boolean(value), do: value
 
-  defp full_text_search_config!(config, where) do
-    config!(:full_text_search, config, where, fn
-      :tokenizer, v -> enum!(:tokenizer, v, @tokenizers, where)
-      :language, v -> enum!(:language, v, @languages, where)
+  defp option!(:full_text_search, config, type) do
+    :full_text_search
+    |> config!(config, fn
+      :tokenizer, v -> enum!(:tokenizer, v, @tokenizers)
+      :language, v -> enum!(:language, v, @languages)
       :max_token_length, v when is_integer(v) and v in 1..254 -> v
-      :max_token_length, v -> invalid!(:max_token_length, v, "an integer between 1 and 254", where)
+      :max_token_length, v -> invalid!(:max_token_length, v, "an integer between 1 and 254")
       :b, v when is_number(v) and v >= 0 and v <= 1 -> v
-      :b, v -> invalid!(:b, v, "a number between 0.0 and 1.0", where)
+      :b, v -> invalid!(:b, v, "a number between 0.0 and 1.0")
       key, v when key in [:k1, :k3] and is_number(v) and v > 0 -> v
-      key, v when key in [:k1, :k3] -> invalid!(key, v, "a number greater than 0", where)
-      key, v when key in [:stemming, :remove_stopwords, :case_sensitive, :ascii_folding] -> boolean!(key, v, where)
-      key, _ -> unknown_option!(:full_text_search, key, where)
+      key, v when key in [:k1, :k3] -> invalid!(key, v, "a number greater than 0")
+      key, v when key in [:stemming, :remove_stopwords, :case_sensitive, :ascii_folding] -> boolean!(key, v)
+      key, _ -> unknown_option!(:full_text_search, key)
     end)
+    |> pre_tokenized!(type)
   end
 
-  defp validate_pre_tokenized!(%{"tokenizer" => "pre_tokenized_array"} = config, type, where) do
+  defp option!(:ann, true, {:vector, _, _}), do: true
+
+  defp option!(:ann, value, {:vector, _, _} = type) do
+    hint =
+      if is_list(value) and Keyword.has_key?(value, :distance_metric),
+        do: "; set the namespace's distance metric with `use TP, distance_metric: ...`",
+        else: ""
+
+    raise ArgumentError, "#{TP.Types.encode(type)} attributes take `ann: true`, got: #{inspect(value)}#{hint}"
+  end
+
+  defp option!(:ann, false, {:multi_vector, _, _}), do: false
+
+  defp option!(:ann, value, {:multi_vector, _, _} = type) do
+    config = if is_list(value), do: config!(:ann, value, fn key, v -> ann_setting!(key, v) end)
+
+    if config != %{"late_interaction" => true} do
+      raise ArgumentError,
+            "#{TP.Types.encode(type)} attributes take `ann: [late_interaction: true]`, or `ann: false` to skip the " <>
+              "index, got: #{inspect(value)}"
+    end
+
+    config
+  end
+
+  defp option!(:sparse_knn, value, _type) do
+    config =
+      config!(:sparse_knn, value, fn
+        :distance_metric, v -> enum!(:distance_metric, v, ~w(dot_product))
+        key, _ -> unknown_option!(:sparse_knn, key)
+      end)
+
+    unless Map.has_key?(config, "distance_metric"), do: raise(ArgumentError, "sparse_knn requires :distance_metric")
+    config
+  end
+
+  defp option!(:embed, model, _type) when is_binary(model), do: nonempty_string!(:embed, model)
+
+  defp option!(:embed, value, _type) do
+    config =
+      config!(:embed, value, fn
+        key, v when key in [:model, :attribute] -> nonempty_string!(key, v)
+        :dims, v when is_integer(v) and v > 0 -> v
+        :dims, v -> invalid!(:dims, v, "a positive integer")
+        :dtype, v -> enum!(:dtype, v, @embed_dtypes)
+        key, _ -> unknown_option!(:embed, key)
+      end)
+
+    unless Map.has_key?(config, "model"), do: raise(ArgumentError, "embed requires :model")
+    config
+  end
+
+  defp ann_setting!(:late_interaction, value), do: boolean!(:late_interaction, value)
+  defp ann_setting!(key, _value), do: unknown_option!(:ann, key)
+
+  defp pre_tokenized!(%{"tokenizer" => "pre_tokenized_array"} = config, type) do
     if type != {:array, :string} do
-      raise ArgumentError, "the pre_tokenized_array tokenizer requires a []string attribute #{where}"
+      raise ArgumentError, "the pre_tokenized_array tokenizer requires a []string attribute"
     end
 
     conflicts =
@@ -295,69 +302,94 @@ defmodule TP.Attribute do
       )
 
     if conflicts != [] do
-      raise ArgumentError,
-            "the pre_tokenized_array tokenizer can't be combined with #{Enum.join(conflicts, ", ")} #{where}"
+      raise ArgumentError, "the pre_tokenized_array tokenizer can't be combined with #{Enum.join(conflicts, ", ")}"
     end
 
     config
   end
 
-  defp validate_pre_tokenized!(config, _type, _where), do: config
+  defp pre_tokenized!(config, _type), do: config
 
-  defp ann_config!(config, multi_vector?, where) do
-    entry =
-      config!(:ann, config, where, fn
-        :distance_metric, v -> enum!(:distance_metric, v, @distance_metrics, where)
-        :late_interaction, v when multi_vector? -> boolean!(:late_interaction, v, where)
-        key, _ -> unknown_option!(:ann, key, where)
+  defp filterable?(type, options) do
+    TP.Types.filterable?(type) and
+      Map.get_lazy(options, :filterable, fn ->
+        not Enum.any?([:full_text_search, :regex, :glob, :fuzzy], &(options[&1] not in [nil, false]))
       end)
-
-    if multi_vector? and entry["late_interaction"] != true do
-      raise ArgumentError, "an ANN index on a multi-vector attribute requires `late_interaction: true` #{where}"
-    end
-
-    entry
   end
 
-  defp config!(option, config, where, validate) when is_list(config) do
-    unless Keyword.keyword?(config), do: invalid!(option, config, "a boolean or keyword list", where)
+  defp embed(nil, _name), do: nil
+  defp embed(model, name) when is_binary(model), do: %{model: model, target: "embed_" <> name, dims: nil, dtype: nil}
 
+  defp embed(config, name) do
+    %{
+      model: config["model"],
+      target: config["attribute"] || "embed_" <> name,
+      dims: config["dims"],
+      dtype: config["dtype"]
+    }
+  end
+
+  defp capabilities(type, primary_key, filterable, options, embed) do
+    [
+      filter: primary_key or filterable,
+      # turbopuffer still runs Glob on attributes that are only filterable.
+      glob: primary_key or filterable or options[:glob] == true,
+      regex: options[:regex] == true,
+      fuzzy: options[:fuzzy] == true,
+      full_text_search: options[:full_text_search] not in [nil, false],
+      ann: match?({:vector, _, _}, type) or options[:ann] not in [nil, false],
+      vector: TP.Types.vector?(type),
+      embed: match?({:vector, _, _}, type) or embed != nil,
+      sparse_knn: match?({:sparse_vector, _}, type),
+      patch: not (primary_key or TP.Types.vector?(type) or embed != nil)
+    ]
+    |> Enum.filter(fn {_capability, able} -> able end)
+    |> Keyword.keys()
+  end
+
+  defp requirement(%{primary_key: true} = attribute, :patch),
+    do: "#{inspect(attribute.field)} can't be patched: turbopuffer ids can't change"
+
+  defp requirement(attribute, :patch) do
+    "#{inspect(attribute.field)} can't be patched: turbopuffer can't patch vectors or the text it embeds, so upsert " <>
+      "the whole document with `on_conflict: :replace_all`"
+  end
+
+  defp requirement(attribute, :filter), do: "#{inspect(attribute.field)} isn't filterable"
+  defp requirement(attribute, :glob), do: "#{inspect(attribute.field)} needs `glob: true` or to be filterable"
+  defp requirement(attribute, :ann), do: "#{inspect(attribute.field)} has no ANN index"
+  defp requirement(attribute, :vector), do: "#{inspect(attribute.field)} isn't a vector"
+  defp requirement(attribute, :embed), do: "#{inspect(attribute.field)} isn't embedded text or a vector"
+  defp requirement(attribute, :sparse_knn), do: "#{inspect(attribute.field)} isn't a sparse vector"
+  defp requirement(attribute, index), do: "#{inspect(attribute.field)} needs `#{index}:`"
+
+  defp config!(option, config, validate) do
+    unless is_list(config) and Keyword.keyword?(config), do: invalid!(option, config, "a keyword list")
     Map.new(config, fn {key, value} -> {Atom.to_string(key), validate.(key, value)} end)
   end
 
-  defp config!(option, config, where, _validate), do: invalid!(option, config, "a keyword list", where)
+  defp unknown_option!(option, key), do: raise(ArgumentError, "unknown #{inspect(option)} option #{inspect(key)}")
 
-  defp unknown_option!(option, key, where) do
-    raise ArgumentError, "unknown #{inspect(option)} option #{inspect(key)} #{where}"
-  end
-
-  defp text_type!(_option, type, _where) when type in [:string, {:array, :string}], do: :ok
-
-  defp text_type!(option, type, where) do
-    raise ArgumentError,
-          "#{inspect(option)} requires a string or []string attribute, not #{TP.Types.encode(type)} #{where}"
-  end
-
-  defp enum!(key, value, allowed, where) do
+  defp enum!(key, value, allowed) do
     string = if is_atom(value) and not is_nil(value), do: Atom.to_string(value), else: value
-    if string in allowed, do: string, else: invalid!(key, value, "one of #{Enum.join(allowed, ", ")}", where)
+    if string in allowed, do: string, else: invalid!(key, value, "one of #{Enum.join(allowed, ", ")}")
   end
 
-  defp boolean!(_key, value, _where) when is_boolean(value), do: value
-  defp boolean!(key, value, where), do: invalid!(key, value, "a boolean", where)
+  defp boolean!(_key, value) when is_boolean(value), do: value
+  defp boolean!(key, value), do: invalid!(key, value, "a boolean")
 
-  defp nonempty_string!(_key, value, _where) when is_binary(value) and value != "", do: value
-  defp nonempty_string!(key, value, where), do: invalid!(key, value, "a non-empty string", where)
+  defp nonempty_string!(_key, value) when is_binary(value) and value != "", do: value
+  defp nonempty_string!(key, value), do: invalid!(key, value, "a non-empty string")
 
-  defp invalid!(key, value, expected, where) do
-    raise ArgumentError, "#{inspect(key)} must be #{expected}, got: #{inspect(value)} #{where}"
+  defp invalid!(key, value, expected) do
+    raise ArgumentError, "#{inspect(key)} must be #{expected}, got: #{inspect(value)}"
   end
 
   defp location(opts) do
     case {opts[:field], opts[:schema]} do
       {nil, _} -> ""
-      {field, nil} -> "(field #{inspect(field)})"
-      {field, schema} -> "(field #{inspect(field)} in #{inspect(schema)})"
+      {field, nil} -> " (field #{inspect(field)})"
+      {field, schema} -> " (field #{inspect(field)} in #{inspect(schema)})"
     end
   end
 end

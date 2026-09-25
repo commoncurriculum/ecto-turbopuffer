@@ -24,6 +24,15 @@ defmodule TP.Types do
           | {:multi_vector, pos_integer(), :f32}
           | {:sparse_vector, :f16}
 
+  @doc "Whether turbopuffer can filter and sort by the type: every scalar but bytes, and arrays of them."
+  @spec filterable?(t()) :: boolean()
+  def filterable?(type), do: type in @array_elements or match?({:array, _}, type)
+
+  @doc "Whether the type is a dense vector column: `[N]` vectors and `[][N]` multi-vectors."
+  @spec vector?(t()) :: boolean()
+  def vector?({kind, _dims, _element}) when kind in [:vector, :multi_vector], do: true
+  def vector?(_type), do: false
+
   @spec decode(String.t()) :: t()
   def decode(type) when is_binary(type) do
     case do_decode(type) do

@@ -44,6 +44,18 @@ defmodule TP.Test.CardStack do
   end
 end
 
+defmodule TP.Test.ReviewedCardStack do
+  @moduledoc "CardStack's namespace, with an attribute its documents don't have yet."
+  use Ecto.Schema
+  use TP, distance_metric: :cosine_distance
+
+  @primary_key {:id, TP, type: "string", autogenerate: false}
+  schema "card_stacks" do
+    field :vector, TP, type: "[3]f32", ann: true
+    field :reviewed_at, TP, type: "datetime"
+  end
+end
+
 defmodule TP.Test.Lesson do
   @moduledoc false
   use Ecto.Schema

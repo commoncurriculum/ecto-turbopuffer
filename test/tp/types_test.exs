@@ -61,4 +61,18 @@ defmodule TP.TypesTest do
   test "rejects non-string types" do
     assert_raise ArgumentError, ~r/must be a string/, fn -> TP.Types.decode(:string) end
   end
+
+  test "filterable?/1 is every scalar but bytes, and arrays" do
+    filterable = ~w(string int uint float uuid datetime bool []string []int []uint []float []uuid []datetime []bool)
+
+    for {string, type} <- @types do
+      assert TP.Types.filterable?(type) == string in filterable, string
+    end
+  end
+
+  test "vector?/1 is dense vectors and multi-vectors" do
+    for {string, type} <- @types do
+      assert TP.Types.vector?(type) == string in ~w([1536]f32 [512]f16 [512]i8 [][128]f32), string
+    end
+  end
 end

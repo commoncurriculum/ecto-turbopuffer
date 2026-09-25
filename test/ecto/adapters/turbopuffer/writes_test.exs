@@ -1,7 +1,7 @@
 defmodule Ecto.Adapters.Turbopuffer.WritesTest do
   use TP.Test.Case, async: true
 
-  alias TP.Test.{CardStack, Lesson}
+  alias TP.Test.{CardStack, Lesson, ReviewedCardStack}
 
   defp card_stack(id, attrs \\ []) do
     struct(%CardStack{id: id, title: "Fractions", position: 1, vector: [1.0, 0.0, 0.0]}, attrs)
@@ -88,9 +88,11 @@ defmodule Ecto.Adapters.Turbopuffer.WritesTest do
       rows = [%{id: "a", title: "One", vector: [1.0, 0.0, 0.0]}, %{id: "b", title: "Two", vector: [1.0, 0.0, 0.0]}]
       Repo.insert_all(CardStack, Enum.take(rows, 1))
 
-      assert_raise ArgumentError, ~r/1 of 2 ids already exist in ecto-tpuf-test-\w+-card_stacks/, fn ->
-        Repo.insert_all(CardStack, rows)
-      end
+      error = assert_raise TP.ConflictError, fn -> Repo.insert_all(CardStack, rows) end
+      assert error.ids == ["a"]
+      assert Exception.message(error) =~ ~r/1 of 2 ids already exist in ecto-tpuf-test-\w+-card_stacks/
+      assert Repo.get!(CardStack, "a").title == "One"
+      assert Repo.get!(CardStack, "b").title == "Two"
 
       assert Repo.insert_all(CardStack, rows, on_conflict: :nothing) == {0, nil}
 
@@ -116,7 +118,7 @@ defmodule Ecto.Adapters.Turbopuffer.WritesTest do
 
       assert_raise ArgumentError, ~r/can't patch vectors or the text it embeds/, fn -> Repo.update(changeset) end
 
-      assert_raise Ecto.QueryError, ~r/can't patch vectors or the text it embeds/, fn ->
+      assert_raise ArgumentError, ~r/can't patch vectors or the text it embeds/, fn ->
         Repo.update_all(Lesson, set: [markdown: "Plants"])
       end
 
@@ -182,9 +184,18 @@ defmodule Ecto.Adapters.Turbopuffer.WritesTest do
     end
 
     test "can't patch vectors by filter" do
-      assert_raise Ecto.QueryError, ~r/can't patch vectors/, fn ->
+      assert_raise ArgumentError, ~r/can't patch vectors/, fn ->
         Repo.update_all(CardStack, set: [vector: [0.0, 1.0, 0.0]])
       end
+    end
+
+    test "update_all declares the schema, so an attribute it adds gets its type" do
+      assert Repo.update_all(ReviewedCardStack, set: [reviewed_at: ~U[2026-01-01 00:00:00Z]]) == {3, nil}
+
+      # A datetime turbopuffer had inferred as a string would make this insert fail, since types can't change.
+      Repo.insert!(%ReviewedCardStack{id: "d", vector: [1.0, 0.0, 0.0], reviewed_at: ~U[2026-02-01 00:00:00Z]})
+
+      assert ids(from r in ReviewedCardStack, where: r.reviewed_at > ^~U[2025-12-31 00:00:00Z]) == ~w(a b c d)
     end
   end
 end

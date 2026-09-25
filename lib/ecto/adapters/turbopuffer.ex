@@ -11,9 +11,10 @@ defmodule Ecto.Adapters.Turbopuffer do
         api_key: System.fetch_env!("TURBOPUFFER_API_KEY"),
         region: "gcp-us-central1"
 
-  Requests go through the `turbopuffer` driver, so the repo also takes `Turbopuffer.Client.new/1`'s options:
-  `:base_url`, `:finch_name`, `:json_library`, `:max_retries` and `:retry_delay`. `:receive_timeout` sets how
-  long to wait for a response, 60 seconds by default. For calls outside Ecto, `client/1` returns the repo's
+  Requests go through the `turbopuffer` driver, so the repo also takes `Turbopuffer.Client.new/1`'s `:base_url`,
+  `:max_retries` and `:retry_delay`. `:receive_timeout` sets how long to wait for a response, 60 seconds by
+  default. Each repo has its own Finch connection pool, which `:pools` configures with Finch's `:pools` option
+  (`%{default: [size: 10, count: 2]}` by default). For calls outside Ecto, `client/1` returns the repo's
   `Turbopuffer.Client`. A failed request raises `TP.Error`.
 
   ## Namespaces
@@ -23,13 +24,14 @@ defmodule Ecto.Adapters.Turbopuffer do
 
   ## Writes
 
-  Every write sends the schema's `TP.schema/1` and `TP.distance_metric/1`, so a namespace is created or extended by
-  its first write.
+  Writes that store values send the schema's `TP.Namespace` schema and distance metric, so a namespace is created
+  or extended by its first write.
 
     * `insert` and `insert_all` upsert whole documents. Like Ecto's other adapters, they refuse to overwrite an
-      existing id by default: `insert` returns a `unique_constraint(:id)` error and `insert_all` raises. Pass
-      `on_conflict: :nothing` to skip existing ids or `on_conflict: :replace_all` to overwrite them.
-      turbopuffer can't replace only some fields of an existing document, so other `:on_conflict` values raise.
+      existing id by default: `insert` returns a `unique_constraint(:id)` error, and `insert_all` writes the new ids
+      and raises `TP.ConflictError` naming the rest. Pass `on_conflict: :nothing` to skip existing ids or
+      `on_conflict: :replace_all` to overwrite them. turbopuffer can't replace only some fields of an existing
+      document, so other `:on_conflict` values raise.
     * `insert_all` sends at most 30 rows per request for schemas with native embedding, turbopuffer's limit, and
       1,000 otherwise. Set `:batch_size` to change that. Batches aren't atomic.
     * `update` patches the changed fields. turbopuffer can't change ids, or patch vectors or the text it embeds
@@ -42,16 +44,23 @@ defmodule Ecto.Adapters.Turbopuffer do
 
   `Repo.all`, `one`, `get`, `exists?`, `aggregate` and `stream` work, with these limits:
 
-    * turbopuffer returns at most 10,000 rows per query. Queries ordered by id, or not ordered, page through
-      everything when there's no limit; any other ordering needs a limit.
+    * turbopuffer returns at most 10,000 rows per query, and `limit + offset` can't exceed that. Queries ordered
+      by id, or not ordered, page through everything when there's no limit; any other ordering needs a limit.
     * `order_by` takes either up to 8 fields or one search from `TP.Query`, not both.
-    * Aggregations support `count()` and `sum/1`, optionally with `group_by`.
-    * `union_all` sends the queries together as a multi-query, each keeping its own ranking and limit, and returns
-      their rows one after another. Pass `rerank_by: :rrf` (or `{:rrf, weights: [2, 1], rank_constant: 60,
-      limit: 20, offset: 0}`) to have turbopuffer fuse them into one ranking with reciprocal rank fusion.
+    * Aggregations support `count()` and `sum/1`. With `group_by`, they need a limit, since turbopuffer returns
+      at most 10,000 groups.
+    * `union_all` sends the queries together as one multi-query against one namespace, each keeping its own
+      ranking and limit, and returns their rows one after another. The first query's `order_by` and `limit` are
+      its own, not the union's. Pass `rerank_by: :rrf` (or `{:rrf, weights: [2, 1], rank_constant: 60, limit: 20,
+      offset: 0}`) to have turbopuffer fuse them into one ranking with reciprocal rank fusion; then every query
+      must select the same fields.
     * `consistency: :eventual` trades freshness for throughput. See `docs/turbopuffer/query.md#param-consistency`.
     * A namespace that hasn't been written to yet reads as empty.
     * No joins, subqueries, distinct, or having.
+
+  Filters follow SQL's null semantics for ordering: `<`, `<=`, `>` and `>=` never match nil, even under `not`.
+  `!=`, `not in`, and `not` around other filters do match nil, as turbopuffer's inverse operators do; add
+  `not is_nil(field)` to exclude it.
 
   Every request emits the repo's `[..., :query]` telemetry event.
   """
@@ -60,13 +69,10 @@ defmodule Ecto.Adapters.Turbopuffer do
   @behaviour Ecto.Adapter.Schema
   @behaviour Ecto.Adapter.Queryable
 
-  alias Ecto.Adapters.Turbopuffer.Query
+  alias Ecto.Adapters.Turbopuffer.Plan
 
-  @client_options [:api_key, :region, :base_url, :finch_name, :json_library, :max_retries, :retry_delay]
-  @embed_batch_size 30
-  @batch_size 1_000
-  @insert_only ["id", "Eq", nil]
-  @existing ["id", "NotEq", nil]
+  @client_options [:api_key, :region, :base_url, :max_retries, :retry_delay]
+  @pools %{default: [size: 10, count: 2]}
 
   @doc "The `Turbopuffer.Client` behind a running repo, for calls outside Ecto."
   @spec client(Ecto.Repo.t() | pid() | atom()) :: Turbopuffer.Client.t()
@@ -75,7 +81,7 @@ defmodule Ecto.Adapters.Turbopuffer do
   @doc "The namespace `schema` reads and writes, under an optional Ecto prefix."
   @spec namespace(module(), String.t() | nil) :: String.t()
   def namespace(schema, prefix \\ nil) do
-    Query.namespace(schema.__schema__(:source), prefix || schema.__schema__(:prefix))
+    TP.Namespace.name!(schema.__schema__(:source), prefix || schema.__schema__(:prefix))
   end
 
   # ------------------------------------------------------------------------------------------------
@@ -91,15 +97,15 @@ defmodule Ecto.Adapters.Turbopuffer do
   @impl Ecto.Adapter
   def init(config) do
     repo = Keyword.fetch!(config, :repo)
+    finch = finch_name(repo, Keyword.get(config, :name, repo))
 
     meta = %{
-      client: config |> Keyword.take(@client_options) |> Turbopuffer.Client.new(),
+      client: config |> Keyword.take(@client_options) |> Keyword.put(:finch_name, finch) |> Turbopuffer.Client.new(),
       request_opts: [receive_timeout: Keyword.get(config, :receive_timeout, 60_000)],
       telemetry: {repo, Keyword.fetch!(config, :telemetry_prefix) ++ [:query]}
     }
 
-    # Requests go through the driver's connection pool, so the repo has no processes of its own.
-    {:ok, %{id: {__MODULE__, repo}, start: {Agent, :start_link, [fn -> :ok end]}}, meta}
+    {:ok, Finch.child_spec(name: finch, pools: Keyword.get(config, :pools, @pools)), meta}
   end
 
   @impl Ecto.Adapter
@@ -128,11 +134,12 @@ defmodule Ecto.Adapters.Turbopuffer do
   @impl Ecto.Adapter.Schema
   def insert(meta, schema_meta, fields, on_conflict, returning, opts) do
     no_returning!(returning)
+    [plan] = Plan.upserts(TP.Namespace.new(schema_meta.schema), namespace_of(schema_meta), [fields], on_conflict, nil)
 
-    case upsert(meta, schema_meta, [TP.__row__(schema_meta.schema, fields)], on_conflict, opts) do
-      1 -> {:ok, []}
-      0 when elem(on_conflict, 0) == :raise -> {:invalid, [unique: "#{schema_meta.source}_id_index"]}
-      0 -> {:ok, []}
+    case write!(meta, plan, opts) do
+      %{"rows_affected" => 1} -> {:ok, []}
+      _ when elem(on_conflict, 0) == :raise -> {:invalid, [unique: "#{schema_meta.source}_id_index"]}
+      _ -> {:ok, []}
     end
   end
 
@@ -143,56 +150,33 @@ defmodule Ecto.Adapters.Turbopuffer do
     schema =
       schema_meta.schema || raise ArgumentError, "turbopuffer's insert_all needs a schema to know the namespace's types"
 
-    rows =
-      Enum.map(rows, fn fields ->
-        TP.__row__(schema, Enum.map(fields, &resolve_placeholder(&1, placeholders)))
-      end)
-
-    count = upsert(meta, schema_meta, rows, on_conflict, opts)
+    rows = Enum.map(rows, fn fields -> Enum.map(fields, &resolve_placeholder(&1, placeholders)) end)
+    name = namespace_of(schema_meta)
+    plans = Plan.upserts(TP.Namespace.new(schema), name, rows, on_conflict, opts[:batch_size])
+    responses = Enum.map(plans, &write!(meta, &1, opts))
+    count = responses |> Enum.map(& &1["rows_affected"]) |> Enum.sum()
 
     if elem(on_conflict, 0) == :raise and count < length(rows) do
-      raise ArgumentError,
-            "#{length(rows) - count} of #{length(rows)} ids already exist in #{meta_namespace(schema_meta)}, so they " <>
-              "weren't inserted. Pass on_conflict: :replace_all to overwrite them or :nothing to skip them."
+      written = MapSet.new(Enum.flat_map(responses, &Map.get(&1, "upserted_ids", [])))
+      ids = for plan <- plans, %{"id" => id} <- plan.body["upsert_rows"], id not in written, do: id
+      raise TP.ConflictError, namespace: name, ids: ids, count: length(rows)
     end
 
     {count, nil}
   end
 
   @impl Ecto.Adapter.Schema
-  def update(meta, %{schema: schema} = schema_meta, fields, filters, returning, opts) do
+  def update(meta, schema_meta, fields, filters, returning, opts) do
     no_returning!(returning)
-    {id, condition} = id_and_condition(filters)
-    attributes = Map.new(TP.attributes(schema), &{&1.name, &1})
-
-    patch =
-      Map.new(fields, fn {source, value} ->
-        attribute = Map.fetch!(attributes, Atom.to_string(source))
-
-        if message = TP.Attribute.patch_error(attribute) do
-          raise ArgumentError, "#{message} (#{inspect(schema)}.#{attribute.field})"
-        end
-
-        {attribute.name, value}
-      end)
-
-    body =
-      schema
-      |> write_body()
-      |> Map.put("patch_rows", [Map.put(patch, "id", id)])
-      |> put("patch_condition", condition)
-
-    if write!(meta, meta_namespace(schema_meta), body, opts) == 1, do: {:ok, []}, else: {:error, :stale}
+    plan = Plan.update(TP.Namespace.new(schema_meta.schema), namespace_of(schema_meta), fields, filters)
+    if write!(meta, plan, opts)["rows_affected"] == 1, do: {:ok, []}, else: {:error, :stale}
   end
 
   @impl Ecto.Adapter.Schema
   def delete(meta, schema_meta, filters, returning, opts) do
     no_returning!(returning)
-    {id, condition} = id_and_condition(filters)
-    condition = if condition, do: ["And", [@existing, condition]], else: @existing
-    body = %{"deletes" => [id], "delete_condition" => condition}
-
-    if write!(meta, meta_namespace(schema_meta), body, opts) == 1, do: {:ok, []}, else: {:error, :stale}
+    plan = Plan.delete(namespace_of(schema_meta), filters)
+    if write!(meta, plan, opts)["rows_affected"] == 1, do: {:ok, []}, else: {:error, :stale}
   end
 
   # ------------------------------------------------------------------------------------------------
@@ -204,23 +188,30 @@ defmodule Ecto.Adapters.Turbopuffer do
 
   @impl Ecto.Adapter.Queryable
   def execute(meta, _query_meta, {:nocache, {:all, query}}, params, opts) do
-    rows = query |> Query.all(params, opts) |> pages(meta, opts) |> Enum.concat()
+    rows = query |> Plan.all(params, opts) |> pages(meta, opts) |> Enum.concat()
     {length(rows), rows}
   end
 
-  def execute(meta, _query_meta, {:nocache, {operation, query}}, params, opts) do
-    plan = apply(Query, operation, [query, params])
-    {write!(meta, plan.namespace, plan.body, opts), nil}
+  def execute(meta, _query_meta, {:nocache, {:update_all, query}}, params, opts) do
+    {write!(meta, Plan.update_all(query, params), opts)["rows_affected"], nil}
+  end
+
+  def execute(meta, _query_meta, {:nocache, {:delete_all, query}}, params, opts) do
+    {write!(meta, Plan.delete_all(query, params), opts)["rows_affected"], nil}
   end
 
   @impl Ecto.Adapter.Queryable
   def stream(meta, _query_meta, {:nocache, {:all, query}}, params, opts) do
-    query |> Query.all(params, opts) |> pages(meta, opts) |> Stream.map(&{length(&1), &1})
+    query |> Plan.all(params, opts) |> pages(meta, opts) |> Stream.map(&{length(&1), &1})
   end
 
   # ------------------------------------------------------------------------------------------------
   # PRIVATE
   # ------------------------------------------------------------------------------------------------
+
+  # Finch names its pool's processes after an atom, so a repo started without a name gets a unique one.
+  defp finch_name(_repo, name) when is_atom(name) and name != nil, do: Module.concat(name, Finch)
+  defp finch_name(repo, _name), do: Module.concat([repo, Finch, "Anonymous#{System.unique_integer([:positive])}"])
 
   defp pages(plan, meta, opts) do
     Stream.unfold(plan.body, fn
@@ -228,74 +219,21 @@ defmodule Ecto.Adapters.Turbopuffer do
         nil
 
       body ->
-        case request(meta, :query, plan.namespace, body, opts) do
-          {:ok, response} -> Query.page(plan, response)
-          {:error, %TP.Error{status: 404}} -> Query.empty_page(plan)
+        case request(meta, %{plan | body: body}, opts) do
+          {:ok, response} -> Plan.page(plan, response)
+          {:error, %TP.Error{status: 404}} -> Plan.empty_page(plan)
           {:error, error} -> raise error
         end
     end)
   end
 
-  # The number of documents a write changed. Patches and deletes on a namespace that doesn't exist yet change none.
-  defp write!(meta, namespace, body, opts) do
-    case request(meta, :write, namespace, body, opts) do
-      {:ok, %{"rows_affected" => count}} -> count
-      {:error, %TP.Error{status: 404}} -> 0
+  # Patches and deletes on a namespace that doesn't exist yet change nothing.
+  defp write!(meta, plan, opts) do
+    case request(meta, plan, opts) do
+      {:ok, response} -> response
+      {:error, %TP.Error{status: 404}} -> %{"rows_affected" => 0}
       {:error, error} -> raise error
     end
-  end
-
-  defp upsert(meta, %{schema: schema} = schema_meta, rows, on_conflict, opts) do
-    condition = upsert_condition!(schema, on_conflict)
-    embeds? = Enum.any?(TP.attributes(schema), &Map.has_key?(&1.schema_entry, "embed"))
-    batch_size = Keyword.get(opts, :batch_size, if(embeds?, do: @embed_batch_size, else: @batch_size))
-    namespace = meta_namespace(schema_meta)
-
-    rows
-    |> Enum.chunk_every(batch_size)
-    |> Enum.map(fn batch ->
-      body = schema |> write_body() |> Map.put("upsert_rows", batch) |> put("upsert_condition", condition)
-      write!(meta, namespace, body, opts)
-    end)
-    |> Enum.sum()
-  end
-
-  defp upsert_condition!(_schema, {mode, _, _}) when mode in [:raise, :nothing], do: @insert_only
-
-  defp upsert_condition!(schema, {fields, _, _}) when is_list(fields) do
-    all = Enum.map(schema.__schema__(:fields), &schema.__schema__(:field_source, &1))
-    keys = Enum.map(schema.__schema__(:primary_key), &schema.__schema__(:field_source, &1))
-
-    case (all -- keys) -- fields do
-      [] ->
-        nil
-
-      missing ->
-        raise ArgumentError,
-              "turbopuffer upserts replace whole documents, so on_conflict must replace every field, " <>
-                "e.g. :replace_all. It leaves out #{inspect(missing)}."
-    end
-  end
-
-  defp upsert_condition!(_schema, _on_conflict) do
-    raise ArgumentError, "turbopuffer can't run an update on conflict; use :replace_all, :nothing, or :raise"
-  end
-
-  defp write_body(schema) do
-    put(%{"schema" => TP.schema(schema)}, "distance_metric", TP.distance_metric(schema))
-  end
-
-  defp id_and_condition(filters) do
-    {ids, others} = Enum.split_with(filters, fn {source, _value} -> source == :id end)
-
-    condition =
-      case Enum.map(others, fn {source, value} -> [Atom.to_string(source), "Eq", value] end) do
-        [] -> nil
-        [condition] -> condition
-        conditions -> ["And", conditions]
-      end
-
-    {Keyword.fetch!(ids, :id), condition}
   end
 
   defp resolve_placeholder({source, {:placeholder, index}}, placeholders),
@@ -313,19 +251,24 @@ defmodule Ecto.Adapters.Turbopuffer do
     raise ArgumentError, "turbopuffer writes can't return fields, got: #{inspect(fields)}"
   end
 
-  defp meta_namespace(%{source: source, prefix: prefix}), do: Query.namespace(source, prefix)
+  defp namespace_of(%{source: source, prefix: prefix}), do: TP.Namespace.name!(source, prefix)
 
-  defp request(%{client: client, telemetry: {repo, event}} = meta, kind, namespace, body, opts) do
-    path = if kind == :query, do: "/v2/namespaces/#{namespace}/query", else: "/v2/namespaces/#{namespace}"
+  defp request(%{client: client, telemetry: {repo, event}} = meta, plan, opts) do
+    {kind, path} =
+      case plan.kind do
+        :write -> {:write, "/v2/namespaces/#{plan.namespace}"}
+        _query -> {:query, "/v2/namespaces/#{plan.namespace}/query"}
+      end
+
     start = System.monotonic_time()
-    result = client |> Turbopuffer.Client.post(path, body, meta.request_opts) |> result()
+    result = client |> Turbopuffer.Client.post(path, plan.body, meta.request_opts) |> result()
 
     :telemetry.execute(event, %{total_time: System.monotonic_time() - start}, %{
       type: :ecto_turbopuffer_query,
       repo: repo,
       kind: kind,
-      source: namespace,
-      query: body,
+      source: plan.namespace,
+      query: plan.body,
       result: result,
       options: Keyword.get(opts, :telemetry_options, [])
     })
@@ -344,7 +287,4 @@ defmodule Ecto.Adapters.Turbopuffer do
     message = if is_exception(reason), do: Exception.message(reason), else: inspect(reason)
     {:error, %TP.Error{message: message}}
   end
-
-  defp put(map, _key, nil), do: map
-  defp put(map, key, value), do: Map.put(map, key, value)
 end

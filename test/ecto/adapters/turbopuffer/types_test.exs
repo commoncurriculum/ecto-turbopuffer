@@ -49,16 +49,16 @@ defmodule Ecto.Adapters.Turbopuffer.TypesTest do
       |> Ecto.Adapters.Turbopuffer.client()
       |> Turbopuffer.Client.get("/v1/namespaces/#{namespace}/metadata")
 
-    for attribute <- TP.attributes(Everything) do
+    for attribute <- TP.Namespace.new(Everything).attributes do
       stored_entry = Map.fetch!(stored, attribute.name)
 
       assert stored_entry["type"] == TP.Types.encode(attribute.type), "#{attribute.name}'s type"
 
-      if Map.has_key?(stored_entry, "filterable") do
+      if Map.has_key?(stored_entry, "filterable") and not attribute.primary_key do
         assert stored_entry["filterable"] == attribute.filterable, "whether #{attribute.name} is filterable"
       end
 
-      for {option, value} <- Map.delete(attribute.schema_entry, "type") do
+      for {option, value} <- Map.delete(TP.Attribute.to_schema(attribute), "type") do
         assert_stored(stored_entry[option], value, "#{attribute.name}'s #{option}")
       end
     end

@@ -56,7 +56,10 @@ Add `MyApp.Search` to your supervision tree like any other repo.
 - **`TP`** is the Ecto type, the turbopuffer counterpart of [`Ch`](https://github.com/plausible/ch). `type:` takes
   turbopuffer's type strings (`"string"`, `"[]uuid"`, `"[1536]f16"`, `"{}f16"`, ...) and every other option is a
   turbopuffer schema option (`full_text_search:`, `filterable:`, `ann:`, `embed:`, ...). Both are checked at compile
-  time, along with turbopuffer's namespace limits. `use TP` sets the namespace's `distance_metric`.
+  time. Every schema with `TP` fields needs `use TP`, which checks turbopuffer's namespace limits when the schema
+  compiles and sets the namespace's `distance_metric`.
+- **`TP.Namespace`** is a schema's namespace: the schema writes declare, and the limits each written value has to
+  fit.
 - **`Ecto.Adapters.Turbopuffer`** maps `insert`, `update`, `delete`, `all`, `aggregate`, `update_all`, `delete_all`
   and `union_all` onto turbopuffer's write and query APIs. Its moduledoc lists what maps to what, and the limits.
 - **`TP.Query`** adds turbopuffer's search and filter operators to `Ecto.Query`: `bm25`, `ann`, `knn`,
@@ -90,8 +93,9 @@ MyApp.Search.all(union_all(text, ^vector), rerank_by: {:rrf, limit: 20})
 turbopuffer's documentation, as the Markdown it publishes, is in [`docs/turbopuffer/`](docs/turbopuffer). Refresh it
 with `scripts/fetch-turbopuffer-docs.sh`.
 
-The tests run against real turbopuffer, as its [testing guide](docs/turbopuffer/testing.md) recommends. Each test
-writes to its own namespaces and deletes them afterwards.
+`mix test` runs without an API key: it checks the types, and the request each query and write compiles to. The
+`:integration` tests run against real turbopuffer, as its [testing guide](docs/turbopuffer/testing.md) recommends,
+when `TURBOPUFFER_API_KEY` is set. Each writes to its own namespaces and deletes them afterwards. CI requires the key.
 
 ```sh
 TURBOPUFFER_API_KEY=... mix test

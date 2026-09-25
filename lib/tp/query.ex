@@ -35,73 +35,57 @@ defmodule TP.Query do
       `contains/2` instead.
 
   Option arguments are maps, because Ecto doesn't allow keyword lists inside fragments.
+
+  The operators are Ecto's keyword fragments, e.g. `fragment(BM25: [c.markdown, ^text])`, which the adapter reads
+  back by name. String fragments like `fragment("Glob(?, ?)", ...)` aren't turbopuffer operators.
   """
 
-  @filters [
-    fuzzy: "Fuzzy",
-    regex: "Regex",
-    glob: "Glob",
-    iglob: "IGlob",
-    contains: "Contains",
-    contains_any: "ContainsAny",
-    contains_all_tokens: "ContainsAllTokens",
-    contains_any_token: "ContainsAnyToken",
-    contains_token_sequence: "ContainsTokenSequence",
-    any_lt: "AnyLt",
-    any_lte: "AnyLte",
-    any_gt: "AnyGt",
-    any_gte: "AnyGte"
+  # Each operator's turbopuffer name, its arities, the attribute capability it needs (see TP.Attribute), and its
+  # role: a filter, a score ranked in its natural direction, a computed attribute, an `embed` vector query, a way
+  # to combine scores, or `$dist`. The last argument of the longer arity is an options map, except for `embed`.
+  @operators [
+    {:fuzzy, "Fuzzy", [2, 3], :fuzzy, :filter},
+    {:regex, "Regex", [2], :regex, :filter},
+    {:glob, "Glob", [2], :glob, :filter},
+    {:iglob, "IGlob", [2], :glob, :filter},
+    {:contains, "Contains", [2], :filter, :filter},
+    {:contains_any, "ContainsAny", [2], :filter, :filter},
+    {:contains_all_tokens, "ContainsAllTokens", [2, 3], :full_text_search, :filter},
+    {:contains_any_token, "ContainsAnyToken", [2, 3], :full_text_search, :filter},
+    {:contains_token_sequence, "ContainsTokenSequence", [2], :full_text_search, :filter},
+    {:any_lt, "AnyLt", [2], :filter, :filter},
+    {:any_lte, "AnyLte", [2], :filter, :filter},
+    {:any_gt, "AnyGt", [2], :filter, :filter},
+    {:any_gte, "AnyGte", [2], :filter, :filter},
+    {:bm25, "BM25", [2, 3], :full_text_search, {:score, :desc}},
+    {:ann, "ANN", [2], :ann, {:score, :asc}},
+    {:knn, "kNN", [2], :vector, {:score, :asc}},
+    {:sparse_knn, "SparseKNN", [2], :sparse_knn, {:score, :desc}},
+    {:vector_distance, "VectorDist", [2], :vector, :compute},
+    {:embed, "Embed", [1, 2], nil, :embed},
+    {:max_score, "Max", [2], nil, :max},
+    {:dist, "$dist", [0], nil, :dist}
   ]
 
-  for {name, op} <- @filters do
-    template = op <> "(?, ?)"
+  for {name, op, arities, _needs, _role} <- @operators, arity <- arities do
+    args = Macro.generate_arguments(arity, __MODULE__)
 
     @doc false
-    defmacro unquote(name)(field, value) do
-      template = unquote(template)
-      quote do: fragment(unquote(template), unquote(field), unquote(value))
-    end
-  end
-
-  for {name, op} <- Keyword.take(@filters, [:fuzzy, :contains_all_tokens, :contains_any_token]) do
-    template = op <> "(?, ?, ?)"
-
-    @doc false
-    defmacro unquote(name)(field, value, params) do
-      template = unquote(template)
-      quote do: fragment(unquote(template), unquote(field), unquote(value), unquote(params))
+    defmacro unquote(name)(unquote_splicing(args)) do
+      keyword = [{unquote(String.to_atom(op)), unquote(args)}]
+      quote do: fragment(unquote(keyword))
     end
   end
 
   @doc false
-  defmacro bm25(field, text), do: quote(do: fragment("BM25(?, ?)", unquote(field), unquote(text)))
+  # The operator a keyword fragment names: `%{op:, arities:, needs:, role:}`, or nil when it isn't one.
+  def __operator__(key)
 
-  @doc false
-  defmacro bm25(field, text, params) do
-    quote do: fragment("BM25(?, ?, ?)", unquote(field), unquote(text), unquote(params))
+  for {_name, op, arities, needs, role} <- @operators do
+    def __operator__(unquote(String.to_atom(op))) do
+      %{op: unquote(op), arities: unquote(arities), needs: unquote(needs), role: unquote(Macro.escape(role))}
+    end
   end
 
-  @doc false
-  defmacro ann(field, vector), do: quote(do: fragment("ANN(?, ?)", unquote(field), unquote(vector)))
-
-  @doc false
-  defmacro knn(field, vector), do: quote(do: fragment("kNN(?, ?)", unquote(field), unquote(vector)))
-
-  @doc false
-  defmacro sparse_knn(field, weights), do: quote(do: fragment("SparseKNN(?, ?)", unquote(field), unquote(weights)))
-
-  @doc false
-  defmacro vector_distance(field, vector), do: quote(do: fragment("VectorDist(?, ?)", unquote(field), unquote(vector)))
-
-  @doc false
-  defmacro embed(text), do: quote(do: fragment("Embed(?)", unquote(text)))
-
-  @doc false
-  defmacro embed(text, model), do: quote(do: fragment("Embed(?, ?)", unquote(text), unquote(model)))
-
-  @doc false
-  defmacro max_score(a, b), do: quote(do: fragment("Max(?, ?)", unquote(a), unquote(b)))
-
-  @doc false
-  defmacro dist, do: quote(do: fragment("$dist"))
+  def __operator__(_key), do: nil
 end

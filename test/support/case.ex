@@ -9,6 +9,8 @@ defmodule TP.Test.Case do
 
   using do
     quote do
+      @moduletag :integration
+
       import Ecto.Query
       import TP.Query
       alias TP.Test.Repo
