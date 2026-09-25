@@ -19,7 +19,12 @@ defmodule TP.ProbeTest do
             "t" => "fox fox"
           }
         ],
-        "schema" => %{"clicks" => "uint", "at" => "datetime", "t" => %{"type" => "string", "full_text_search" => true}}
+        "schema" => %{
+          "clicks" => "uint",
+          "ratio" => "float",
+          "at" => "datetime",
+          "t" => %{"type" => "string", "full_text_search" => true}
+        }
       })
 
     ranks = [
