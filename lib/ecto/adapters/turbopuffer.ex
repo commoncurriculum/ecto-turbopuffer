@@ -48,8 +48,10 @@ defmodule Ecto.Adapters.Turbopuffer do
     * `update` patches the changed fields. turbopuffer can't change ids, or patch vectors or the text it embeds
       natively, so changing one raises; upsert instead. `update` and `delete` raise `Ecto.StaleEntryError` when the
       id doesn't exist.
-    * `update_all` (`set` only) and `delete_all` patch and delete by filter, up to turbopuffer's 50k and 5M
-      document limits per call.
+    * `update_all` (`set` only) and `delete_all` patch and delete by filter. turbopuffer patches at most 50k
+      documents a request and deletes at most 5M, so past those they take more than one request, and aren't
+      atomic: `update_all` patches the matches 10,000 ids at a time, and `delete_all` repeats until nothing it
+      matches remains. `select: c.id` returns the ids they wrote.
 
   ## Queries
 
@@ -174,7 +176,8 @@ defmodule Ecto.Adapters.Turbopuffer do
   @doc """
   Copies every document of the namespace named `from` into a schema's empty namespace, server side. Pass
   `:from_region` and `:from_api_key` to copy from another region or organization. The copy keeps the source's
-  sharding unless the schema sets `num_shards`. See `docs/turbopuffer/write.md#param-copy_from_namespace`.
+  sharding unless the schema sets `num_shards`. It returns once turbopuffer finishes, which may run the copy in the
+  background. See `docs/turbopuffer/write.md#param-copy_from_namespace`.
   """
   @spec copy(Ecto.Repo.t(), module(), keyword()) :: :ok
   def copy(repo, schema, opts) do
@@ -194,7 +197,7 @@ defmodule Ecto.Adapters.Turbopuffer do
       %{"copy_from_namespace" => from}
       |> put("sharding", Map.get(TP.Namespace.write_params(TP.Namespace.new(schema)), "sharding"))
 
-    namespace_request!(repo, schema, opts, :copy, :post, "/v2/namespaces/:namespace", body)
+    namespace_request!(repo, schema, opts, :copy, :post, "/v2/namespaces/:namespace", body, respond_async: true)
     :ok
   end
 
@@ -233,7 +236,8 @@ defmodule Ecto.Adapters.Turbopuffer do
       Ecto.Adapters.Turbopuffer.recall(Repo, from(c in CardStack, where: c.planbook_id == ^id, limit: 10), num: 5)
 
   turbopuffer's docs say recall can also measure a given search (`rank_by`), but it answers one with a 404 for a
-  namespace that exists, so a query with an `order_by` raises.
+  namespace that exists, whether `num` is 1 or its default and before or after the index is built, so a query with
+  an `order_by` raises.
   """
   @spec recall(Ecto.Repo.t(), Ecto.Queryable.t(), keyword()) :: map()
   def recall(repo, queryable, opts \\ []) do
@@ -250,7 +254,8 @@ defmodule Ecto.Adapters.Turbopuffer do
       Plan.recall(query, params, opts),
       opts,
       :recall,
-      namespace
+      namespace,
+      respond_async: true
     )
   end
 
@@ -358,11 +363,43 @@ defmodule Ecto.Adapters.Turbopuffer do
   end
 
   def execute(meta, _query_meta, {:nocache, {:update_all, query}}, params, opts) do
-    {write!(meta, Plan.update_all(query, params), opts)["rows_affected"], nil}
+    plan = Plan.update_all(query, params)
+
+    responses =
+      case request(meta, plan, opts) do
+        {:ok, response} ->
+          [response]
+
+        {:error, %TP.Error{status: 404}} ->
+          []
+
+        # turbopuffer refuses, patching nothing, a patch that matches more than 50k documents.
+        {:error, %TP.Error{status: status} = error} when status in 400..499 and status != 429 ->
+          if count(meta, Plan.match_count(plan), opts) > Plan.patch_limit(),
+            do: patch_by_id(meta, plan, opts),
+            else: raise(error)
+
+        {:error, error} ->
+          raise error
+      end
+
+    Plan.affected(plan, responses)
   end
 
   def execute(meta, _query_meta, {:nocache, {:delete_all, query}}, params, opts) do
-    {write!(meta, Plan.delete_all(query, params), opts)["rows_affected"], nil}
+    plan = Plan.delete_all(query, params)
+
+    responses =
+      Stream.unfold(plan, fn
+        nil ->
+          nil
+
+        plan ->
+          response = write!(meta, plan, opts)
+          {response, if(response["rows_remaining"], do: plan)}
+      end)
+
+    Plan.affected(plan, Enum.to_list(responses))
   end
 
   @impl Ecto.Adapter.Queryable
@@ -404,6 +441,21 @@ defmodule Ecto.Adapters.Turbopuffer do
     end)
   end
 
+  defp count(meta, plan, opts) do
+    [[count]] = plan |> pages(meta, opts) |> Enum.concat()
+    count
+  end
+
+  # Each page of ids is at most 10,000, so the patch of its range stays under turbopuffer's limit. A page's patch
+  # can't change which ids the next page reads, since those come after it.
+  defp patch_by_id(meta, plan, opts) do
+    plan
+    |> Plan.matching_ids()
+    |> pages(meta, opts)
+    |> Stream.reject(&(&1 == []))
+    |> Enum.map(fn [[first] | _] = ids -> write!(meta, Plan.patch_between(plan, first, hd(List.last(ids))), opts) end)
+  end
+
   # Patches and deletes on a namespace that doesn't exist yet change nothing.
   defp write!(meta, plan, opts) do
     case request(meta, plan, opts) do
@@ -435,9 +487,11 @@ defmodule Ecto.Adapters.Turbopuffer do
     end
   end
 
-  defp request(%{client: client, telemetry: {repo, event}} = meta, method, path, body, opts, kind, namespace) do
+  defp request(meta, method, path, body, opts, kind, namespace, client_opts \\ []) do
+    %{client: client, telemetry: {repo, event}} = meta
     start = System.monotonic_time()
-    result = client |> Turbopuffer.Client.request(method, path, body, meta.request_opts) |> result()
+    client_opts = Keyword.merge(meta.request_opts, client_opts)
+    result = client |> Turbopuffer.Client.request(method, path, body, client_opts) |> result()
 
     :telemetry.execute(event, %{total_time: System.monotonic_time() - start}, %{
       type: :ecto_turbopuffer_query,
@@ -458,17 +512,18 @@ defmodule Ecto.Adapters.Turbopuffer do
 
   defp redact(body), do: body
 
-  defp request!(meta, method, path, body, opts, kind, namespace) do
-    case request(meta, method, path, body, opts, kind, namespace) do
+  defp request!(meta, method, path, body, opts, kind, namespace, client_opts \\ []) do
+    case request(meta, method, path, body, opts, kind, namespace, client_opts) do
       {:ok, response} -> response
       {:error, error} -> raise error
     end
   end
 
-  defp namespace_request!(repo, schema, opts, kind, method, path, body) do
+  defp namespace_request!(repo, schema, opts, kind, method, path, body, client_opts \\ []) do
     opts = Keyword.validate!(opts, [:prefix, :telemetry_options])
     namespace = namespace(schema, prefix(repo, opts))
-    request!(meta(repo), method, String.replace(path, ":namespace", namespace), body, opts, kind, namespace)
+    path = String.replace(path, ":namespace", namespace)
+    request!(meta(repo), method, path, body, opts, kind, namespace, client_opts)
   end
 
   # Repo operations apply the repo's default_options/1, so these do too, as a query would.
@@ -488,8 +543,15 @@ defmodule Ecto.Adapters.Turbopuffer do
 
   defp result({:ok, body}), do: {:ok, body}
 
+  # An operation turbopuffer ran in the background fails with its message alone.
   defp result({:error, {:http_error, status, body}}) do
-    message = if is_map(body) and is_binary(body["error"]), do: body["error"], else: inspect(body)
+    message =
+      cond do
+        is_map(body) and is_binary(body["error"]) -> body["error"]
+        is_binary(body) -> body
+        true -> inspect(body)
+      end
+
     {:error, %TP.Error{status: status, message: message}}
   end
 

@@ -13,7 +13,7 @@ defmodule TP.Test.Case do
 
       import Ecto.Query
       import TP.Query
-      import TP.Test.Case, only: [requests: 1]
+      import TP.Test.Case, only: [requests: 1, http_requests: 1]
       alias Ecto.Adapters.Turbopuffer
       alias TP.Test.Repo
     end
@@ -36,9 +36,17 @@ defmodule TP.Test.Case do
   end
 
   @doc "Runs `fun`, returning its result and the requests it sent, as their telemetry metadata."
-  def requests(fun) do
+  def requests(fun), do: capture([:tp, :test, :repo, :query], fun)
+
+  @doc "Runs `fun`, returning its result and the HTTP requests the driver sent for it, as `Finch.Request`s."
+  def http_requests(fun) do
+    {result, events} = capture([:finch, :request, :start], fun)
+    {result, Enum.map(events, & &1.request)}
+  end
+
+  defp capture(event, fun) do
     handler = {__MODULE__, make_ref()}
-    :telemetry.attach(handler, [:tp, :test, :repo, :query], &__MODULE__.forward/4, self())
+    :telemetry.attach(handler, event, &__MODULE__.forward/4, self())
 
     try do
       result = fun.()

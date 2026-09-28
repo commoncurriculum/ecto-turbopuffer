@@ -1,7 +1,7 @@
 defmodule Ecto.Adapters.Turbopuffer.WritesTest do
   use TP.Test.Case, async: true
 
-  alias TP.Test.{CardStack, Everything, Lesson, ReviewedCardStack}
+  alias TP.Test.{CardStack, Everything, Lesson, ReviewedCardStack, ShardedStack}
 
   defp card_stack(id, attrs \\ []) do
     struct(%CardStack{id: id, title: "Fractions", position: 1, vector: [1.0, 0.0, 0.0]}, attrs)
@@ -212,9 +212,44 @@ defmodule Ecto.Adapters.Turbopuffer.WritesTest do
       assert ids(from r in ReviewedCardStack, where: r.reviewed_at > ^~U[2025-12-31 00:00:00Z]) == ~w(a b c d)
     end
 
+    test "return the ids they write when the query selects the id" do
+      selected = fn {count, ids} -> {count, Enum.sort(ids)} end
+
+      p1 = from c in CardStack, where: c.planbook_id == "p1", select: c.id
+      assert selected.(Repo.update_all(p1, set: [title: "M"])) == {2, ~w(a b)}
+
+      p3 = from c in CardStack, where: c.planbook_id == "p3", select: c.id
+      assert Repo.update_all(p3, set: [title: "M"]) == {0, []}
+
+      moved = from c in CardStack, where: c.title == "M", select: %{id: c.id}
+      assert selected.(Repo.delete_all(moved)) == {2, [%{id: "a"}, %{id: "b"}]}
+    end
+
     test "change nothing in a namespace that doesn't exist yet" do
       assert Repo.update_all(Everything, set: [title: "x"]) == {0, nil}
       assert Repo.delete_all(Everything) == {0, nil}
+      assert Repo.delete_all(from(e in Everything, select: e.id)) == {0, []}
     end
+  end
+
+  @tag timeout: :timer.minutes(10)
+  test "update_all patches past turbopuffer's 50k limit a page of ids at a time, and delete_all deletes them all" do
+    ids = Enum.to_list(1..50_001)
+    rows = for id <- ids, do: %{id: id, position: 0}
+    assert Repo.insert_all(ShardedStack, rows, on_conflict: :replace_all, batch_size: 10_000) == {50_001, nil}
+
+    unmoved = from s in ShardedStack, where: s.position == 0, select: s.id
+    {{count, patched}, requests} = requests(fn -> Repo.update_all(unmoved, set: [position: 1]) end)
+    assert {count, Enum.sort(patched)} == {50_001, ids}
+
+    # The patch of all of them, which turbopuffer refuses, then one for each page of 10,000 ids.
+    assert [%{result: {:error, %TP.Error{status: status}}} | pages] = Enum.filter(requests, &(&1.kind == :write))
+    assert status in 400..499 and length(pages) == 6
+
+    assert Repo.aggregate(from(s in ShardedStack, where: s.position == 1), :count) == 50_001
+
+    {count, deleted} = Repo.delete_all(from(s in ShardedStack, select: s.id))
+    assert {count, Enum.sort(deleted)} == {50_001, ids}
+    assert Repo.aggregate(ShardedStack, :count) == 0
   end
 end

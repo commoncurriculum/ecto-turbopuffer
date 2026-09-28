@@ -9,6 +9,7 @@ defmodule Ecto.Adapters.Turbopuffer.Plan do
 
   @max_limit 10_000
   @max_queries 16
+  @patch_limit 50_000
   @batch_size 1_000
   # turbopuffer's limit on documents per write for namespaces with native embedding.
   @embed_batch_size 30
@@ -64,6 +65,11 @@ defmodule Ecto.Adapters.Turbopuffer.Plan do
     |> put("num", opts[:num])
   end
 
+  @doc """
+  Patches every document the query matches. Selecting the id has turbopuffer return the ids it patched. It
+  patches at most 50k documents a request, so past that the adapter patches `matching_ids/1`'s pages one range at
+  a time.
+  """
   def update_all(query, params) do
     ctx = context(query, params, :update_all)
 
@@ -81,13 +87,61 @@ defmodule Ecto.Adapters.Turbopuffer.Plan do
         namespace -> {TP.Namespace.write_params(namespace), TP.Namespace.patch!(namespace, fields)}
       end
 
-    body = Map.put(params, "patch_by_filter", %{"filters" => filters(ctx, Expr.everything()), "patch" => patch})
-    %__MODULE__{kind: :write, namespace: name(query), body: body}
+    readers = id_readers(ctx, :update_all)
+
+    body =
+      params
+      |> Map.put("patch_by_filter", %{"filters" => filters(ctx, Expr.everything()), "patch" => patch})
+      |> put("return_affected_ids", if(readers != [], do: true))
+
+    %__MODULE__{kind: :write, namespace: name(query), body: body, readers: readers}
   end
 
+  @doc """
+  Deletes every document the query matches, returning the ids it deleted when the query selects the id.
+  turbopuffer deletes at most 5M documents a request, and says whether more remain, so the adapter repeats it.
+  """
   def delete_all(query, params) do
     ctx = context(query, params, :delete_all)
-    %__MODULE__{kind: :write, namespace: name(query), body: %{"delete_by_filter" => filters(ctx, Expr.everything())}}
+    readers = id_readers(ctx, :delete_all)
+
+    body =
+      %{"delete_by_filter" => filters(ctx, Expr.everything()), "delete_by_filter_allow_partial" => true}
+      |> put("return_affected_ids", if(readers != [], do: true))
+
+    %__MODULE__{kind: :write, namespace: name(query), body: body, readers: readers}
+  end
+
+  @doc "The query counting the documents an update_all matches, to tell whether it's past turbopuffer's 50k limit."
+  def match_count(%__MODULE__{body: %{"patch_by_filter" => %{"filters" => filters}}} = plan) do
+    body = %{"aggregate_by" => %{"count" => ["Count"]}, "filters" => filters}
+    %__MODULE__{kind: :aggregate, namespace: plan.namespace, body: body, readers: [{:key, "count", 0}]}
+  end
+
+  def patch_limit, do: @patch_limit
+
+  @doc "The ids an update_all matches, in pages of 10,000 in id order."
+  def matching_ids(%__MODULE__{body: %{"patch_by_filter" => %{"filters" => filters}}} = plan) do
+    body = %{"rank_by" => ["id", "asc"], "limit" => @max_limit, "filters" => filters, "include_attributes" => false}
+    %__MODULE__{kind: :rows, namespace: plan.namespace, body: body, readers: [{:key, "id", nil}], cursor: :asc}
+  end
+
+  @doc "An update_all's patch of the documents it matches from id `first` to id `last`."
+  def patch_between(%__MODULE__{} = plan, first, last) do
+    range = Expr.junction(:and, ["id", "Gte", first], ["id", "Lte", last])
+    update_in(plan.body["patch_by_filter"]["filters"], &Expr.junction(:and, &1, range))
+  end
+
+  @doc "What update_all or delete_all returns from turbopuffer's responses: the count, and the ids if selected."
+  def affected(%__MODULE__{readers: readers, body: body}, responses) do
+    count = responses |> Enum.map(&Map.get(&1, "rows_affected", 0)) |> Enum.sum()
+    key = if Map.has_key?(body, "patch_by_filter"), do: "patched_ids", else: "deleted_ids"
+
+    if readers == [] do
+      {count, nil}
+    else
+      {count, for(response <- responses, id <- Map.get(response, key, []), do: read(readers, %{"id" => id}))}
+    end
   end
 
   @doc """
@@ -364,9 +418,6 @@ defmodule Ecto.Adapters.Turbopuffer.Plan do
       not match?({source, _} when is_binary(source), query.from.source) ->
         Expr.error!(query, "turbopuffer has no subqueries")
 
-      operation != :all and query.select ->
-        Expr.error!(query, "turbopuffer's #{operation} can't return rows")
-
       operation == :all and query.group_bys != [] and not Enum.any?(query.select.fields, &aggregate?/1) ->
         Expr.error!(query, "group_by needs an aggregate")
 
@@ -429,6 +480,22 @@ defmodule Ecto.Adapters.Turbopuffer.Plan do
 
     {readers, include |> Enum.reverse() |> Enum.uniq(), compute}
   end
+
+  # The ids are all turbopuffer returns from a write.
+  defp id_readers(%Expr{query: %{select: nil}}, _operation), do: []
+
+  defp id_readers(%Expr{query: query} = ctx, operation) do
+    case select(ctx, query.select.fields) do
+      {readers, [], compute} when compute == %{} and readers != [] ->
+        if Enum.all?(readers, &(&1 == {:key, "id", nil})), do: readers, else: id_readers_error!(query, operation)
+
+      _ ->
+        id_readers_error!(query, operation)
+    end
+  end
+
+  defp id_readers_error!(query, operation),
+    do: Expr.error!(query, "turbopuffer's #{operation} can only return the ids it writes, like `select: c.id`")
 
   # Vectors read back smaller and faster as base64. Schemaless queries don't know which attributes are vectors.
   defp vector?(%Expr{namespace: nil}, _name), do: false
