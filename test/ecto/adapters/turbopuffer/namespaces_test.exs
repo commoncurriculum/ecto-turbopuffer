@@ -88,15 +88,26 @@ defmodule Ecto.Adapters.Turbopuffer.NamespacesTest do
     assert %{"branching" => %{"parent" => ^source}} = Turbopuffer.metadata(Repo, CardStack, prefix: branch)
   end
 
-  test "copy copies every document, from this region or another", %{prefix: prefix} do
+  test "copy copies every document, from this region or another organization's, once turbopuffer finishes",
+       %{prefix: prefix} do
     Repo.insert_all(CardStack, stacks(3))
     source = Turbopuffer.namespace(CardStack, prefix)
 
-    assert Turbopuffer.copy(Repo, CardStack, from: source, prefix: prefix <> "-copy") == :ok
+    {result, [copy | polls]} =
+      http_requests(fn -> Turbopuffer.copy(Repo, CardStack, from: source, prefix: prefix <> "-copy") end)
+
+    assert result == :ok
+    assert {"prefer", "respond-async"} in copy.headers
+    assert Enum.all?(polls, &(&1.method == "GET"))
     assert ids(CardStack, prefix: prefix <> "-copy") == ~w(s1 s2 s3)
 
-    assert Turbopuffer.copy(Repo, CardStack, from: source, from_region: "gcp-us-central1", prefix: prefix <> "-region") ==
-             :ok
+    # This organization's key stands in for another's.
+    assert Turbopuffer.copy(Repo, CardStack,
+             from: source,
+             from_region: "gcp-us-central1",
+             from_api_key: System.fetch_env!("TURBOPUFFER_API_KEY"),
+             prefix: prefix <> "-region"
+           ) == :ok
 
     assert ids(CardStack, prefix: prefix <> "-region") == ~w(s1 s2 s3)
     refute Map.has_key?(Turbopuffer.metadata(Repo, CardStack, prefix: prefix <> "-copy"), "branching")
@@ -122,7 +133,7 @@ defmodule Ecto.Adapters.Turbopuffer.NamespacesTest do
     assert Repo.aggregate(ShardedStack, :count) == 10
   end
 
-  test "recall measures the vector index over random documents, with a query's filters and limit" do
+  test "recall measures the vector index over random documents, with a query's filters and limit, or one search" do
     Repo.insert_all(CardStack, stacks(20, planbook_id: "p1"))
 
     assert %{"avg_recall" => recall, "avg_ann_count" => 5.0, "avg_exhaustive_count" => 5.0} =
@@ -135,5 +146,27 @@ defmodule Ecto.Adapters.Turbopuffer.NamespacesTest do
 
     assert request.query == %{"filters" => ["planbook_id", "Eq", "p1"], "top_k" => 3, "num" => 2}
     assert %{"avg_recall" => _, "avg_ann_count" => 3.0, "avg_exhaustive_count" => 3.0} = result
+
+    # turbopuffer measures a given search against the index, so it has to be built.
+    wait_until(fn -> Turbopuffer.metadata(Repo, CardStack)["index"]["status"] == "up-to-date" end)
+    search = from c in CardStack, order_by: ann(c.vector, ^[1.0, 1.0, 0.5]), limit: 4
+
+    {result, [request]} = requests(fn -> Turbopuffer.recall(Repo, search) end)
+    assert %{"rank_by" => ["vector", "ANN", _], "top_k" => 4} = request.query
+    assert %{"avg_recall" => _, "avg_ann_count" => 4.0, "avg_exhaustive_count" => 4.0} = result
+  end
+
+  defp wait_until(fun, attempts \\ 120) do
+    cond do
+      fun.() ->
+        :ok
+
+      attempts > 1 ->
+        Process.sleep(1_000)
+        wait_until(fun, attempts - 1)
+
+      true ->
+        flunk("still waiting after two minutes")
+    end
   end
 end

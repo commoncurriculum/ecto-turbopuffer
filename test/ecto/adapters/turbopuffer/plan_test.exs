@@ -224,8 +224,10 @@ defmodule Ecto.Adapters.Turbopuffer.PlanTest do
            ~r/:vector can't be patched/},
           {:update_all, from(c in CardStack, update: [inc: [position: 1]]), Ecto.QueryError,
            ~r/can only `set` fields in update_all, not inc/},
-          {:delete_all, from(c in CardStack, select: c.id), Ecto.QueryError,
-           ~r/turbopuffer's delete_all can't return rows/},
+          {:delete_all, from(c in CardStack, select: c.title), Ecto.QueryError,
+           ~r/turbopuffer's delete_all can only return the ids it writes/},
+          {:update_all, from(c in CardStack, update: [set: [title: "x"]], select: c), Ecto.QueryError,
+           ~r/turbopuffer's update_all can only return the ids it writes/},
           {:delete_all, from(c in CardStack, where: c.markdown == "x"), Ecto.QueryError, ~r/:markdown isn't filterable/}
         ] do
       assert_raise exception, message, fn -> write(operation, query) end
@@ -254,11 +256,11 @@ defmodule Ecto.Adapters.Turbopuffer.PlanTest do
     end
   end
 
-  test "recall of a query's own search, which turbopuffer answers with a 404" do
+  test "recall of a query's own search, which is one search" do
     query = from c in CardStack, order_by: ann(c.vector, ^@vector), limit: 3
     {query, _cast, params} = Ecto.Adapter.Queryable.plan_query(:all, Ecto.Adapters.Turbopuffer, query)
 
-    assert_raise Ecto.QueryError, ~r/recall endpoint can't take a rank_by yet/, fn -> Plan.recall(query, params, []) end
+    assert_raise ArgumentError, ~r/:num must be 1, got: 2/, fn -> Plan.recall(query, params, num: 2) end
   end
 
   test "namespace names turbopuffer doesn't allow" do

@@ -16,6 +16,8 @@ defmodule TP.CoverageTest do
   @writes_delete {"writes_test.exs", "delete deletes a document"}
   @writes_by_filter {"writes_test.exs", "patch and delete by filter"}
   @writes_backpressure {"writes_test.exs", "disable_backpressure writes"}
+  @writes_ids {"writes_test.exs", "return the ids they write"}
+  @writes_past_limit {"writes_test.exs", "patches past turbopuffer's 50k limit"}
   @query_comparisons {"query_test.exs", "comparisons, in, and nil checks"}
   @query_logic {"query_test.exs", "and, or, not, or_where"}
   @query_arrays {"query_test.exs", "arrays"}
@@ -85,17 +87,18 @@ defmodule TP.CoverageTest do
               "write.md patch_by_filter" => @writes_by_filter,
               "write.md delete_by_filter" => @writes_by_filter,
               "write.md patch_by_filter_allow_partial" =>
-                {:not_supported,
-                 "update_all fails past turbopuffer's 50k-document limit rather than patching part of the match, " <>
+                {:not_applicable,
+                 "update_all patches past the 50k limit a range of ids at a time instead (writes_test.exs), " <>
                    "since repeating a partial patch never ends when the patch doesn't change what the filter matches"},
-              "write.md delete_by_filter_allow_partial" =>
-                {:not_supported,
-                 "delete_all fails past turbopuffer's 5M-document limit rather than deleting part of it"},
-              "write.md rows_remaining" => {:not_supported, "only set by the partial writes above"},
+              "write.md delete_by_filter_allow_partial" => @writes_past_limit,
+              "write.md rows_remaining" =>
+                {:untestable,
+                 "set only when one request matches more than 5M documents to delete, too many to write in a test; " <>
+                   "delete_all repeats until it's unset"},
               "write.md return_affected_ids" => @writes_conflict,
               "write.md upserted_ids" => @writes_conflict,
-              "write.md patched_ids" => {:not_supported, "Ecto's update_all and update return counts, not ids"},
-              "write.md deleted_ids" => {:not_supported, "Ecto's delete_all and delete return counts, not ids"},
+              "write.md patched_ids" => @writes_ids,
+              "write.md deleted_ids" => @writes_ids,
               "write.md rows_affected" => @writes_by_filter,
               "write.md rows_upserted" => {:not_applicable, "rows_affected, which the adapter reads, is the sum"},
               "write.md rows_patched" => {:not_applicable, "rows_affected, which the adapter reads, is the sum"},
@@ -104,8 +107,7 @@ defmodule TP.CoverageTest do
               "write.md copy_from_namespace" => @namespaces_copy,
               "write.md source_namespace" => @namespaces_copy,
               "write.md source_region" => @namespaces_copy,
-              "write.md source_api_key" =>
-                {:untestable, "copy's :from_api_key copies from another organization, which needs a second account"},
+              "write.md source_api_key" => @namespaces_copy,
               "write.md branch_from_namespace" => @namespaces_branch,
               "write.md schema" => @types_schema,
               "write.md sharding" => @namespaces_shards,
@@ -248,17 +250,13 @@ defmodule TP.CoverageTest do
               "recall.md num" => @namespaces_recall,
               "recall.md top_k" => @namespaces_recall,
               "recall.md filters" => @namespaces_recall,
-              "recall.md rank_by" =>
-                {:not_supported,
-                 "turbopuffer answers a recall with a rank_by with a 404 for a namespace that exists, and one with " <>
-                   "kNN with 'query type not supported', so recall/3 rejects an order_by (plan_test.exs)"},
+              "recall.md rank_by" => @namespaces_recall,
               "recall.md avg_recall" => @namespaces_recall,
               "recall.md avg_exhaustive_count" => @namespaces_recall,
               "recall.md avg_ann_count" => @namespaces_recall,
               "type [][N]f32" =>
                 {:untestable, "vector arrays are in private beta, and turbopuffer rejects them for this account"},
-              "api async requests" =>
-                {:not_supported, "copy and recall wait for turbopuffer to finish, as its own clients do"},
+              "api async requests" => @namespaces_copy,
               "api error responses" => @query_errors,
               "api 429" =>
                 {:untestable, "turbopuffer returns 429 under load, which the driver retries (Turbopuffer.Retry)"}
