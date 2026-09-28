@@ -31,6 +31,7 @@ defmodule Ecto.Adapters.Turbopuffer.NamespacesTest do
     assert is_integer(rows) and is_integer(bytes) and status in ["up-to-date", "updating"]
   end
 
+  @tag timeout: :timer.minutes(5)
   test "pinning reserves compute for a namespace until it's unpinned" do
     Repo.insert_all(CardStack, stacks(1))
     pin = fn -> Turbopuffer.update_metadata(Repo, CardStack, pinning: [replicas: 1]) end
@@ -41,7 +42,7 @@ defmodule Ecto.Adapters.Turbopuffer.NamespacesTest do
   end
 
   # A region runs out of capacity to pin for a while, and turbopuffer says to try again later.
-  defp retry_while_unavailable(fun, attempts \\ 24) do
+  defp retry_while_unavailable(fun, attempts \\ 48) do
     fun.()
   rescue
     error in TP.Error ->
@@ -147,7 +148,7 @@ defmodule Ecto.Adapters.Turbopuffer.NamespacesTest do
     assert Repo.aggregate(ShardedStack, :count) == 10
   end
 
-  test "recall measures the vector index over random documents, with a query's filters and limit, or one search" do
+  test "recall measures the vector index over random documents, with a query's filters and limit" do
     Repo.insert_all(CardStack, stacks(20, planbook_id: "p1"))
 
     assert %{"avg_recall" => recall, "avg_ann_count" => 5.0, "avg_exhaustive_count" => 5.0} =
@@ -160,27 +161,5 @@ defmodule Ecto.Adapters.Turbopuffer.NamespacesTest do
 
     assert request.query == %{"filters" => ["planbook_id", "Eq", "p1"], "top_k" => 3, "num" => 2}
     assert %{"avg_recall" => _, "avg_ann_count" => 3.0, "avg_exhaustive_count" => 3.0} = result
-
-    # turbopuffer measures a given search against the index, so it has to be built.
-    wait_until(fn -> Turbopuffer.metadata(Repo, CardStack)["index"]["status"] == "up-to-date" end)
-    search = from c in CardStack, order_by: ann(c.vector, ^[1.0, 1.0, 0.5]), limit: 4
-
-    {result, [request]} = requests(fn -> Turbopuffer.recall(Repo, search) end)
-    assert %{"rank_by" => ["vector", "ANN", _], "top_k" => 4, "num" => 1} = request.query
-    assert %{"avg_recall" => _, "avg_ann_count" => 4.0, "avg_exhaustive_count" => 4.0} = result
-  end
-
-  defp wait_until(fun, attempts \\ 120) do
-    cond do
-      fun.() ->
-        :ok
-
-      attempts > 1 ->
-        Process.sleep(1_000)
-        wait_until(fun, attempts - 1)
-
-      true ->
-        flunk("still waiting after two minutes")
-    end
   end
 end

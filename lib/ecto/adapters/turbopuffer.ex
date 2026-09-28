@@ -231,11 +231,13 @@ defmodule Ecto.Adapters.Turbopuffer do
   Measures the recall of a namespace's vector index (`docs/turbopuffer/recall.md`), returning `"avg_recall"`,
   `"avg_ann_count"` and `"avg_exhaustive_count"`: turbopuffer searches for `:num` random documents' vectors (25 by
   default), comparing its index's top `:top_k` (10 by default) to an exact search. Given a query, the searches
-  keep to its `where`, and its `limit` is the top_k. A query ordered by `ann/2` measures that one search instead,
-  so `:num` can only be 1.
+  keep to its `where`, and its `limit` is the top_k.
 
       Ecto.Adapters.Turbopuffer.recall(Repo, from(c in CardStack, where: c.planbook_id == ^id, limit: 10), num: 5)
-      Ecto.Adapters.Turbopuffer.recall(Repo, from(c in CardStack, order_by: ann(c.vector, ^vector), limit: 10))
+
+  turbopuffer's docs say recall can also measure a given search (`rank_by`), but it answers one with a 404 for a
+  namespace that exists, whether `num` is 1 or its default and before or after the index is built, so a query with
+  an `order_by` raises.
   """
   @spec recall(Ecto.Repo.t(), Ecto.Queryable.t(), keyword()) :: map()
   def recall(repo, queryable, opts \\ []) do

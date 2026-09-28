@@ -256,11 +256,11 @@ defmodule Ecto.Adapters.Turbopuffer.PlanTest do
     end
   end
 
-  test "recall of a query's own search, which is one search" do
+  test "recall of a query's own search, which turbopuffer answers with a 404" do
     query = from c in CardStack, order_by: ann(c.vector, ^@vector), limit: 3
     {query, _cast, params} = Ecto.Adapter.Queryable.plan_query(:all, Ecto.Adapters.Turbopuffer, query)
 
-    assert_raise ArgumentError, ~r/:num must be 1, got: 2/, fn -> Plan.recall(query, params, num: 2) end
+    assert_raise Ecto.QueryError, ~r/recall endpoint can't take a rank_by yet/, fn -> Plan.recall(query, params, []) end
   end
 
   test "namespace names turbopuffer doesn't allow" do

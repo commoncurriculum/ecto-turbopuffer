@@ -17,7 +17,6 @@
 - `update_all` patches more than turbopuffer's 50k documents a request by patching the matches 10,000 ids at a
   time, and `delete_all` repeats past its 5M until nothing it matches remains. `select: c.id` on either returns
   the ids written.
-- `recall/3` of a query ordered by `ann/2` measures that one search.
 - `copy/3` and `recall/3` let turbopuffer run in the background, and return once it finishes.
 - Queries that select vectors read them as base64.
 - `full_text_search` with `case_sensitive: true` and `stemming: true` or `remove_stopwords: true` fails at compile
