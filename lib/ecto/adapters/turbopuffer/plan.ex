@@ -64,7 +64,8 @@ defmodule Ecto.Adapters.Turbopuffer.Plan do
     |> put("rank_by", rank_by)
     |> put("filters", filters(ctx, nil))
     |> put("top_k", opts[:top_k] || if(query.limit, do: limit(ctx)))
-    |> put("num", opts[:num])
+    # num defaults to 25, which turbopuffer rejects with a rank_by.
+    |> put("num", if(rank_by, do: 1, else: opts[:num]))
   end
 
   @doc """

@@ -147,26 +147,10 @@ defmodule Ecto.Adapters.Turbopuffer.NamespacesTest do
     assert request.query == %{"filters" => ["planbook_id", "Eq", "p1"], "top_k" => 3, "num" => 2}
     assert %{"avg_recall" => _, "avg_ann_count" => 3.0, "avg_exhaustive_count" => 3.0} = result
 
-    # turbopuffer measures a given search against the index, so it has to be built.
-    wait_until(fn -> Turbopuffer.metadata(Repo, CardStack)["index"]["status"] == "up-to-date" end)
     search = from c in CardStack, order_by: ann(c.vector, ^[1.0, 1.0, 0.5]), limit: 4
 
     {result, [request]} = requests(fn -> Turbopuffer.recall(Repo, search) end)
-    assert %{"rank_by" => ["vector", "ANN", _], "top_k" => 4} = request.query
+    assert %{"rank_by" => ["vector", "ANN", _], "top_k" => 4, "num" => 1} = request.query
     assert %{"avg_recall" => _, "avg_ann_count" => 4.0, "avg_exhaustive_count" => 4.0} = result
-  end
-
-  defp wait_until(fun, attempts \\ 120) do
-    cond do
-      fun.() ->
-        :ok
-
-      attempts > 1 ->
-        Process.sleep(1_000)
-        wait_until(fun, attempts - 1)
-
-      true ->
-        flunk("still waiting after two minutes")
-    end
   end
 end
