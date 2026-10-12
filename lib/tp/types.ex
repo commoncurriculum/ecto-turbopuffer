@@ -8,7 +8,8 @@ defmodule TP.Types do
       "[][128]f32" <-> {:multi_vector, 128, :f32}
       "{}f16"      <-> {:sparse_vector, :f16}
 
-  See https://turbopuffer.com/docs/write#schema for the list of types.
+  See https://turbopuffer.com/docs/write#schema for the list of types. The docs only list `[][N]f32` vector arrays,
+  but turbopuffer also takes `[][N]f16` and `[][N]i8`.
   """
 
   @scalars [:string, :int, :uint, :float, :uuid, :datetime, :bool, :bytes]
@@ -21,7 +22,7 @@ defmodule TP.Types do
           | :bytes
           | {:array, array_element()}
           | {:vector, pos_integer(), :f32 | :f16 | :i8}
-          | {:multi_vector, pos_integer(), :f32}
+          | {:multi_vector, pos_integer(), :f32 | :f16 | :i8}
           | {:sparse_vector, :f16}
 
   @doc "Whether turbopuffer can filter and sort by the type: every scalar but bytes, and arrays of them."
@@ -43,7 +44,7 @@ defmodule TP.Types do
         raise ArgumentError,
               "failed to decode #{inspect(type)} as turbopuffer type (#{reason}). " <>
                 "Valid types: string, int, uint, float, uuid, datetime, bool, bytes, []string, []int, []uint, " <>
-                "[]float, []uuid, []datetime, []bool, [N]f32, [N]f16, [N]i8, [][N]f32, {}f16"
+                "[]float, []uuid, []datetime, []bool, [N]f32, [N]f16, [N]i8, [][N]f32, [][N]f16, [][N]i8, {}f16"
     end
   end
 
@@ -59,11 +60,7 @@ defmodule TP.Types do
   defp do_decode("{}f16"), do: {:ok, {:sparse_vector, :f16}}
 
   defp do_decode("[][" <> rest) do
-    with {:ok, dims, element} <- decode_vector(rest) do
-      if element == :f32,
-        do: {:ok, {:multi_vector, dims, element}},
-        else: {:error, "multi-vector attributes only support f32 elements"}
-    end
+    with {:ok, dims, element} <- decode_vector(rest), do: {:ok, {:multi_vector, dims, element}}
   end
 
   defp do_decode("[]" <> element) do

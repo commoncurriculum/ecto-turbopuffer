@@ -237,8 +237,8 @@ defmodule Ecto.Adapters.Turbopuffer do
       Ecto.Adapters.Turbopuffer.recall(Repo, from(c in CardStack, where: c.planbook_id == ^id, limit: 10), num: 5)
       Ecto.Adapters.Turbopuffer.recall(Repo, from(c in CardStack, order_by: ann(c.vector, ^vector), limit: 10))
 
-  turbopuffer answers recall with a 404 for a few seconds after a namespace is created, so a 404 is retried for up
-  to `:not_found_timeout` milliseconds (30 seconds by default) before it raises.
+  turbopuffer answers a recall of a search with a 404 for about 10 seconds after a namespace is created, so a 404
+  is retried for up to `:not_found_timeout` milliseconds (30 seconds by default) before it raises.
   """
   @spec recall(Ecto.Repo.t(), Ecto.Queryable.t(), keyword()) :: map()
   def recall(repo, queryable, opts \\ []) do

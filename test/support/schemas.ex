@@ -57,8 +57,9 @@ end
 
 defmodule TP.Test.Tokens do
   @moduledoc """
-  Per-token vectors for late interaction (docs/turbopuffer/query.md). turbopuffer requires every document to have
-  at least one vector in a vector array attribute, so it can't share a namespace with TP.Test.Everything.
+  Per-token vectors for late interaction (docs/turbopuffer/query.md), of each element type turbopuffer takes.
+  turbopuffer requires every document to have at least one vector in each vector array attribute, so they can't
+  share a namespace with TP.Test.Everything.
   """
   use Ecto.Schema
   use TP, distance_metric: :cosine_distance
@@ -67,6 +68,19 @@ defmodule TP.Test.Tokens do
   schema "tokens" do
     field :planbook_id, TP, type: "string"
     field :vectors, TP, type: "[][2]f32", ann: [late_interaction: true]
+    field :half_vectors, TP, type: "[][2]f16", ann: [late_interaction: true]
+    field :small_vectors, TP, type: "[][2]i8", ann: [late_interaction: true]
+  end
+end
+
+defmodule TP.Test.UnindexedTokens do
+  @moduledoc "Vector arrays stored without an index, which takes no distance metric."
+  use Ecto.Schema
+  use TP
+
+  @primary_key {:id, TP, type: "string", autogenerate: false}
+  schema "unindexed_tokens" do
+    field :vectors, TP, type: "[][2]f32", ann: false
   end
 end
 

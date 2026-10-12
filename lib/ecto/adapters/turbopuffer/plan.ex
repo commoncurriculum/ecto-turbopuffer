@@ -55,6 +55,10 @@ defmodule Ecto.Adapters.Turbopuffer.Plan do
     opts = Keyword.validate!(opts, [:num, :top_k, :prefix, :telemetry_options])
     rank_by = if query.order_bys != [], do: elem(Expr.rank_by(ctx), 0)
 
+    if rank_by && not match?([_field, "ANN", [value | _]] when not is_binary(value), rank_by) do
+      Expr.error!(query, "turbopuffer's recall only measures an ann/2 search of a vector, not embedded text")
+    end
+
     if rank_by && opts[:num] not in [nil, 1] do
       raise ArgumentError,
             "recall measures one search when it's given an order_by, so :num must be 1, got: #{inspect(opts[:num])}"

@@ -56,6 +56,8 @@ defmodule TP.NamespaceTest do
            ~r/embeds 5 attributes; turbopuffer allows 4/},
           {~s(field :markdown, TP, type: "string", embed: "m"), [distance_metric: nil],
            ~r/has vector columns, so turbopuffer needs a distance metric: add `use TP/},
+          {~s(field :tokens, TP, type: "[][2]i8", ann: [late_interaction: true]), [distance_metric: nil],
+           ~r/has vector columns, so turbopuffer needs a distance metric/},
           {~s(field :markdown, TP, type: "string", embed: [model: "m", attribute: "vec"]), [],
            ~r/embed attribute "vec" must be an \[N\] vector field in the schema/},
           {"""
@@ -78,6 +80,9 @@ defmodule TP.NamespaceTest do
                """,
                []
              )
+
+    # A vector array without an index needs no distance metric.
+    assert [{_, _}] = compile(~s(field :tokens, TP, type: "[][2]f16", ann: false), distance_metric: nil)
   end
 
   test "a document needs an id and every vector, unless native embedding fills the vector from its text" do

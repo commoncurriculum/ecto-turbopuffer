@@ -12,7 +12,8 @@ defmodule TP.Attribute do
       `:remove_stopwords`, `:case_sensitive`, `:ascii_folding`, `:max_token_length`, `:k1`, `:b`, `:k3`;
       `string` and `[]string`. The `pre_tokenized_array` tokenizer needs `[]string` and rejects the language settings.
     * `:ann` - `true`, required on `[N]` vectors. `[late_interaction: true]` on `[][N]` multi-vectors, or `false` to
-      store them without an index. `use TP, distance_metric:` sets the namespace's distance metric.
+      store them without an index, which `knn` ranks but `ann` can't. `use TP, distance_metric:` sets the
+      namespace's distance metric, which turbopuffer rejects when nothing is indexed.
     * `:sparse_knn` - `[distance_metric: :dot_product]`, `{}f16` only
     * `:embed` - model name or keyword list of `:model`, `:attribute`, `:dims`, `:dtype`, `string` only.
       turbopuffer stores the vector in `:attribute`, `embed_<name>` by default.
@@ -382,7 +383,8 @@ defmodule TP.Attribute do
       embed_model: embed != nil or kind(type) == :vector,
       sparse_knn: kind(type) == :sparse_vector,
       rank: (primary_key or filterable) and type in [:int, :uint, :float, :datetime],
-      patch: not (primary_key or TP.Types.vector?(type) or embed != nil)
+      # turbopuffer patches vector arrays, though not [N] vectors.
+      patch: not (primary_key or kind(type) == :vector or embed != nil)
     ]
     |> Enum.filter(fn {_capability, able} -> able end)
     |> Keyword.keys()

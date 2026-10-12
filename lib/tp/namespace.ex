@@ -83,7 +83,7 @@ defmodule TP.Namespace do
         raise ArgumentError,
               "#{inspect(module)} embeds #{length(embedded)} attributes; turbopuffer allows #{@max_embedded_attributes}"
 
-      vector_columns != [] and namespace.distance_metric == nil ->
+      indexed_vector_columns(attributes) != [] and namespace.distance_metric == nil ->
         raise ArgumentError,
               "#{inspect(module)} has vector columns, so turbopuffer needs a distance metric: " <>
                 "add `use TP, distance_metric: :cosine_distance` (or :euclidean_squared)"
@@ -136,10 +136,27 @@ defmodule TP.Namespace do
       check_limits!(ns, attribute, value)
 
       cond do
-        value != nil -> row
-        attribute.primary_key -> raise ArgumentError, "cannot write #{inspect(ns.module)} without an id"
-        match?({:vector, _, _}, attribute.type) -> Map.delete(row, require_embedded!(ns, attribute, row))
-        true -> row
+        value == [] and match?({:multi_vector, _, _}, attribute.type) ->
+          raise ArgumentError,
+                "cannot write #{inspect(ns.module)}.#{attribute.field}: a vector array needs at least one vector"
+
+        value != nil ->
+          row
+
+        attribute.primary_key ->
+          raise ArgumentError, "cannot write #{inspect(ns.module)} without an id"
+
+        match?({:vector, _, _}, attribute.type) ->
+          Map.delete(row, require_embedded!(ns, attribute, row))
+
+        # turbopuffer's docs say every attribute is nullable, but it rejects a document without a vector array.
+        match?({:multi_vector, _, _}, attribute.type) ->
+          raise ArgumentError,
+                "cannot write #{inspect(ns.module)} without #{inspect(attribute.field)}: " <>
+                  "turbopuffer upserts must include every vector array attribute"
+
+        true ->
+          row
       end
     end)
   end
@@ -185,6 +202,17 @@ defmodule TP.Namespace do
     vectors = for %{type: type, name: name} <- attributes, TP.Types.vector?(type), do: name
     targets = for %{embed: %{target: target}} <- attributes, do: target
     Enum.uniq(vectors ++ targets)
+  end
+
+  # A vector array stored with `ann: false` has no index, and turbopuffer rejects a distance metric for a namespace
+  # without one.
+  defp indexed_vector_columns(attributes) do
+    unindexed =
+      for %{type: {:multi_vector, _, _}, name: name} = attribute <- attributes,
+          attribute.options[:ann] in [nil, false],
+          do: name
+
+    vector_columns(attributes) -- unindexed
   end
 
   # An embed that names its vector attribute has to name a declared vector it fits, so that queries can read it.

@@ -256,12 +256,24 @@ defmodule Ecto.Adapters.Turbopuffer.PlanTest do
     end
   end
 
-  test "recall of a query's own search, which can only run once" do
+  test "recall of a query's own search, which can only run once and only measures ann of a vector" do
     query = from c in CardStack, order_by: ann(c.vector, ^@vector), limit: 3
     {query, _cast, params} = Ecto.Adapter.Queryable.plan_query(:all, Ecto.Adapters.Turbopuffer, query)
 
     assert %{"rank_by" => ["vector", "ANN", _], "top_k" => 3, "num" => 1} = Plan.recall(query, params, [])
     assert_raise ArgumentError, ~r/:num must be 1, got: 5/, fn -> Plan.recall(query, params, num: 5) end
+
+    for search <- [
+          from(c in CardStack, where: c.planbook_id == "p1", order_by: knn(c.vector, ^@vector), limit: 3),
+          from(c in CardStack, order_by: ann(c.vector, embed(^"fractions", ^"openai/text-embedding-3-small"))),
+          from(c in CardStack, order_by: [desc: bm25(c.markdown, "fractions")])
+        ] do
+      {search, _cast, params} = Ecto.Adapter.Queryable.plan_query(:all, Ecto.Adapters.Turbopuffer, search)
+
+      assert_raise Ecto.QueryError, ~r/recall only measures an ann\/2 search of a vector/, fn ->
+        Plan.recall(search, params, [])
+      end
+    end
   end
 
   test "namespace names turbopuffer doesn't allow" do
