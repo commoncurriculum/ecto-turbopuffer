@@ -234,6 +234,40 @@ defmodule Ecto.Adapters.Turbopuffer.SearchTest do
                )
     end
 
+    test "ann ranks vector arrays by late interaction, and knn ranks them exactly" do
+      vectors = Map.take(Everything.new([]), [:embedding, :half_embedding, :small_embedding])
+
+      Repo.insert_all(Everything, [
+        Map.merge(vectors, %{id: "x", planbook_id: "p1", token_vectors: [[1.0, 0.0], [0.9, 0.1]]}),
+        Map.merge(vectors, %{id: "y", planbook_id: "p1", token_vectors: [[0.0, 1.0], [0.1, 0.9], [0.5, 0.5]]}),
+        Map.merge(vectors, %{id: "z", planbook_id: "p2", token_vectors: [[0.7, 0.7]]})
+      ])
+
+      query = [[0.0, 1.0], [0.2, 0.8]]
+
+      {rows, [request]} =
+        requests(fn ->
+          Repo.all(
+            from e in Everything,
+              order_by: ann(e.token_vectors, ^query),
+              limit: 3,
+              select: {e.id, e.token_vectors}
+          )
+        end)
+
+      assert request.query["rank_by"] == ["token_vectors", "ANN", query]
+      assert [{"y", [[0.0, 1.0], [0.1, 0.9], [0.5, 0.5]]}, {"z", _}, {"x", _}] = rows
+
+      exact =
+        from e in Everything,
+          where: e.planbook_id == "p1",
+          order_by: knn(e.token_vectors, ^query),
+          limit: 2,
+          select: e.id
+
+      assert Repo.all(exact) == ~w(y x)
+    end
+
     test "knn ranks exactly within a filter, and vector_distance selects a distance" do
       exact =
         from c in CardStack, where: c.planbook_id == "history", order_by: knn(c.vector, ^[1.0, 0.0, 0.0]), limit: 2

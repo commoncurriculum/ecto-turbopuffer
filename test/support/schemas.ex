@@ -1,7 +1,6 @@
 defmodule TP.Test.Everything do
   @moduledoc """
-  Every turbopuffer type the API generally offers, and every schema option but native embedding (see
-  TP.Test.Embedding). Multi-vectors are in private beta, so they're left out.
+  Every turbopuffer type, and every schema option but native embedding (see TP.Test.Embedding).
   """
   use Ecto.Schema
   use TP, distance_metric: :cosine_distance
@@ -47,6 +46,7 @@ defmodule TP.Test.Everything do
     field :half_embedding, TP, type: "[2]f16", ann: true
     field :small_embedding, TP, type: "[2]i8", ann: true
     field :sparse, TP, type: "{}f16", sparse_knn: [distance_metric: :dot_product]
+    field :token_vectors, TP, type: "[][2]f32", ann: [late_interaction: true]
   end
 
   @doc "A document with `attrs` and the vectors turbopuffer requires."

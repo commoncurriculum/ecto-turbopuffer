@@ -231,32 +231,46 @@ defmodule Ecto.Adapters.Turbopuffer do
   Measures the recall of a namespace's vector index (`docs/turbopuffer/recall.md`), returning `"avg_recall"`,
   `"avg_ann_count"` and `"avg_exhaustive_count"`: turbopuffer searches for `:num` random documents' vectors (25 by
   default), comparing its index's top `:top_k` (10 by default) to an exact search. Given a query, the searches
-  keep to its `where`, and its `limit` is the top_k.
+  keep to its `where`, and its `limit` is the top_k. A query ordered by `ann/2` measures that one search instead,
+  so `:num` can only be 1.
 
       Ecto.Adapters.Turbopuffer.recall(Repo, from(c in CardStack, where: c.planbook_id == ^id, limit: 10), num: 5)
+      Ecto.Adapters.Turbopuffer.recall(Repo, from(c in CardStack, order_by: ann(c.vector, ^vector), limit: 10))
 
-  turbopuffer's docs say recall can also measure a given search (`rank_by`), but it answers one with a 404 for a
-  namespace that exists, whether `num` is 1 or its default and before or after the index is built, so a query with
-  an `order_by` raises.
+  turbopuffer answers recall with a 404 for a few seconds after a namespace is created, so a 404 is retried for up
+  to `:not_found_timeout` milliseconds (30 seconds by default) before it raises.
   """
   @spec recall(Ecto.Repo.t(), Ecto.Queryable.t(), keyword()) :: map()
   def recall(repo, queryable, opts \\ []) do
+    {timeout, opts} = Keyword.pop(opts, :not_found_timeout, 30_000)
     query = Ecto.Queryable.to_query(queryable)
     query = if prefix = prefix(repo, opts), do: Ecto.Query.put_query_prefix(query, prefix), else: query
     {query, _cast, params} = Ecto.Adapter.Queryable.plan_query(:all, __MODULE__, query)
     {source, _schema, prefix} = elem(query.sources, 0)
     namespace = TP.Namespace.name!(source, prefix)
+    body = Plan.recall(query, params, opts)
+    deadline = System.monotonic_time(:millisecond) + timeout
 
-    request!(
-      meta(repo),
-      :post,
-      "/v1/namespaces/#{namespace}/_debug/recall",
-      Plan.recall(query, params, opts),
-      opts,
-      :recall,
-      namespace,
-      respond_async: true
-    )
+    retry_not_found(deadline, fn ->
+      request(meta(repo), :post, "/v1/namespaces/#{namespace}/_debug/recall", body, opts, :recall, namespace,
+        respond_async: true
+      )
+    end)
+  end
+
+  defp retry_not_found(deadline, fun, delay \\ 500) do
+    case fun.() do
+      {:ok, response} ->
+        response
+
+      {:error, %TP.Error{status: 404} = error} ->
+        if System.monotonic_time(:millisecond) + delay > deadline, do: raise(error)
+        Process.sleep(delay)
+        retry_not_found(deadline, fun, min(delay * 2, 4_000))
+
+      {:error, error} ->
+        raise error
+    end
   end
 
   # ------------------------------------------------------------------------------------------------

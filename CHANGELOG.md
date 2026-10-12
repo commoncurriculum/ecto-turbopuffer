@@ -18,6 +18,10 @@
   time, and `delete_all` repeats past its 5M until nothing it matches remains. `select: c.id` on either returns
   the ids written.
 - `copy/3` and `recall/3` let turbopuffer run in the background, and return once it finishes.
+- `recall/3` measures a query's own search when it has an `order_by`, and retries the 404s turbopuffer answers
+  while a namespace is new, for up to `:not_found_timeout` milliseconds.
+- `[][N]f32` vector arrays are tested against turbopuffer: `ann/2` ranks them by late interaction and `knn/2`
+  exactly.
 - Queries that select vectors read them as base64.
 - `full_text_search` with `case_sensitive: true` and `stemming: true` or `remove_stopwords: true` fails at compile
   time, since turbopuffer rejects it.

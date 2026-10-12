@@ -30,7 +30,8 @@ defmodule Ecto.Adapters.Turbopuffer.TypesTest do
         embedding: [1, -0.5, 0.25],
         half_embedding: [0.5, 1.25],
         small_embedding: [-128, 127],
-        sparse: %{"1" => 0.5, "7" => 1.0}
+        sparse: %{"1" => 0.5, "7" => 1.0},
+        token_vectors: [[1, 0], [0.5, -0.25]]
       )
 
     Repo.insert!(written)
@@ -40,7 +41,8 @@ defmodule Ecto.Adapters.Turbopuffer.TypesTest do
       | owner_uuid: "769c134d-07b8-4225-954a-b6cc5ffc320c",
         updated_at: ~U[2026-09-24 12:34:56.123Z],
         dates: [~U[2026-01-02 03:04:05.000Z], ~U[2026-01-03 00:00:00.999Z]],
-        embedding: [1.0, -0.5, 0.25]
+        embedding: [1.0, -0.5, 0.25],
+        token_vectors: [[1.0, 0.0], [0.5, -0.25]]
     }
 
     {loaded, [request]} = requests(fn -> Repo.get!(Everything, "doc") end)

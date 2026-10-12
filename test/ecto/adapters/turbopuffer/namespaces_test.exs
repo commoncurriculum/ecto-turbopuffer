@@ -148,7 +148,7 @@ defmodule Ecto.Adapters.Turbopuffer.NamespacesTest do
     assert Repo.aggregate(ShardedStack, :count) == 10
   end
 
-  test "recall measures the vector index over random documents, with a query's filters and limit" do
+  test "recall measures the vector index over random documents, with a query's filters and limit, or one search" do
     Repo.insert_all(CardStack, stacks(20, planbook_id: "p1"))
 
     assert %{"avg_recall" => recall, "avg_ann_count" => 5.0, "avg_exhaustive_count" => 5.0} =
@@ -161,5 +161,23 @@ defmodule Ecto.Adapters.Turbopuffer.NamespacesTest do
 
     assert request.query == %{"filters" => ["planbook_id", "Eq", "p1"], "top_k" => 3, "num" => 2}
     assert %{"avg_recall" => _, "avg_ann_count" => 3.0, "avg_exhaustive_count" => 3.0} = result
+
+    search = from c in CardStack, where: c.planbook_id == "p1", order_by: ann(c.vector, ^[1.0, 1.0, 0.5]), limit: 4
+    {result, [request]} = requests(fn -> Turbopuffer.recall(Repo, search) end)
+
+    assert %{"rank_by" => ["vector", "ANN", [1.0, 1.0, 0.5]], "filters" => _, "top_k" => 4, "num" => 1} =
+             request.query
+
+    assert %{"avg_recall" => _, "avg_ann_count" => 4.0, "avg_exhaustive_count" => 4.0} = result
+  end
+
+  test "recall retries the 404s turbopuffer answers while a namespace is new, until :not_found_timeout" do
+    {error, requests} =
+      requests(fn ->
+        assert_raise TP.Error, fn -> Turbopuffer.recall(Repo, CardStack, top_k: 3, not_found_timeout: 2_000) end
+      end)
+
+    assert error.status == 404
+    assert length(requests) in 3..4
   end
 end
