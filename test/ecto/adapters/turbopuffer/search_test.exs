@@ -249,7 +249,8 @@ defmodule Ecto.Adapters.Turbopuffer.SearchTest do
         end)
 
       assert request.query["rank_by"] == ["vectors", "ANN", query]
-      assert [{"y", [[0.0, 1.0], [0.1, 0.9], [0.5, 0.5]]}, {"z", _}, {"x", _}] = rows
+      assert Enum.map(rows, &elem(&1, 0)) == ~w(y z x)
+      assert hd(rows) == {"y", [[0.0, 1.0], [0.1, 0.9], [0.5, 0.5]]}
 
       exact = from t in Tokens, where: t.planbook_id == "p1", order_by: knn(t.vectors, ^query), limit: 2, select: t.id
       assert Repo.all(exact) == ~w(y x)

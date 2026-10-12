@@ -163,7 +163,9 @@ defmodule Ecto.Adapters.Turbopuffer.NamespacesTest do
     assert %{"avg_recall" => _, "avg_ann_count" => 3.0, "avg_exhaustive_count" => 3.0} = result
 
     search = from c in CardStack, where: c.planbook_id == "p1", order_by: ann(c.vector, ^[1.0, 1.0, 0.5]), limit: 4
-    {result, [request]} = requests(fn -> Turbopuffer.recall(Repo, search) end)
+    # turbopuffer answers a recall of a search with 404s while the namespace is new, which recall retries.
+    {result, requests} = requests(fn -> Turbopuffer.recall(Repo, search) end)
+    assert %{result: {:ok, _}} = request = List.last(requests)
 
     assert %{"rank_by" => ["vector", "ANN", [1.0, 1.0, 0.5]], "filters" => _, "top_k" => 4, "num" => 1} =
              request.query

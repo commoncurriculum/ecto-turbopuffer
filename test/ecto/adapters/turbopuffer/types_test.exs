@@ -52,7 +52,7 @@ defmodule Ecto.Adapters.Turbopuffer.TypesTest do
 
     # turbopuffer returns vector arrays as lists of floats, even when asked for base64.
     Repo.insert!(%Tokens{id: "doc", vectors: [[1, 0], [0.5, -0.25]]})
-    assert %Tokens{vectors: [[1.0, 0.0], [0.5, -0.25]]} = Repo.get!(Tokens, "doc")
+    assert Repo.get!(Tokens, "doc").vectors == [[1.0, 0.0], [0.5, -0.25]]
 
     # Unlike every other attribute, a vector array can't be null.
     assert_raise TP.Error, ~r/missing writes for vector array attribute "vectors"/, fn ->
