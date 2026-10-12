@@ -1,7 +1,7 @@
 defmodule Ecto.Adapters.Turbopuffer.TypesTest do
   use TP.Test.Case, async: true
 
-  alias TP.Test.{Everything, Lesson, MultiEmbed, ShardedStack, TextSettings}
+  alias TP.Test.{Everything, Lesson, MultiEmbed, ShardedStack, TextSettings, Tokens}
 
   test "every type round-trips through turbopuffer, normalized the way turbopuffer stores it" do
     written =
@@ -30,8 +30,7 @@ defmodule Ecto.Adapters.Turbopuffer.TypesTest do
         embedding: [1, -0.5, 0.25],
         half_embedding: [0.5, 1.25],
         small_embedding: [-128, 127],
-        sparse: %{"1" => 0.5, "7" => 1.0},
-        token_vectors: [[1, 0], [0.5, -0.25]]
+        sparse: %{"1" => 0.5, "7" => 1.0}
       )
 
     Repo.insert!(written)
@@ -41,8 +40,7 @@ defmodule Ecto.Adapters.Turbopuffer.TypesTest do
       | owner_uuid: "769c134d-07b8-4225-954a-b6cc5ffc320c",
         updated_at: ~U[2026-09-24 12:34:56.123Z],
         dates: [~U[2026-01-02 03:04:05.000Z], ~U[2026-01-03 00:00:00.999Z]],
-        embedding: [1.0, -0.5, 0.25],
-        token_vectors: [[1.0, 0.0], [0.5, -0.25]]
+        embedding: [1.0, -0.5, 0.25]
     }
 
     {loaded, [request]} = requests(fn -> Repo.get!(Everything, "doc") end)
@@ -50,6 +48,15 @@ defmodule Ecto.Adapters.Turbopuffer.TypesTest do
 
     for field <- Everything.__schema__(:fields) do
       assert Map.fetch!(loaded, field) == Map.fetch!(expected, field), "#{field} didn't round-trip"
+    end
+
+    # turbopuffer returns vector arrays as lists of floats, even when asked for base64.
+    Repo.insert!(%Tokens{id: "doc", vectors: [[1, 0], [0.5, -0.25]]})
+    assert %Tokens{vectors: [[1.0, 0.0], [0.5, -0.25]]} = Repo.get!(Tokens, "doc")
+
+    # Unlike every other attribute, a vector array can't be null.
+    assert_raise TP.Error, ~r/missing writes for vector array attribute "vectors"/, fn ->
+      Repo.insert!(%Tokens{id: "none"})
     end
   end
 
@@ -59,9 +66,10 @@ defmodule Ecto.Adapters.Turbopuffer.TypesTest do
     Repo.insert!(%ShardedStack{id: 1})
     Repo.insert!(%MultiEmbed{id: "m", default: "a", quantized: "b", declared: "c", wide: "d"})
     Repo.insert!(%TextSettings{id: "t"})
+    Repo.insert!(%Tokens{id: "t", vectors: [[1.0, 0.0]]})
 
     mismatches =
-      for schema <- [Everything, Lesson, ShardedStack, MultiEmbed, TextSettings],
+      for schema <- [Everything, Lesson, ShardedStack, MultiEmbed, TextSettings, Tokens],
           stored = Turbopuffer.metadata(Repo, schema)["schema"],
           namespace = TP.Namespace.new(schema),
           attribute <- namespace.attributes,

@@ -1,6 +1,7 @@
 defmodule TP.Test.Everything do
   @moduledoc """
-  Every turbopuffer type, and every schema option but native embedding (see TP.Test.Embedding).
+  Every turbopuffer type, and every schema option but native embedding (see TP.Test.Embedding) and vector arrays
+  (see TP.Test.Tokens).
   """
   use Ecto.Schema
   use TP, distance_metric: :cosine_distance
@@ -46,12 +47,26 @@ defmodule TP.Test.Everything do
     field :half_embedding, TP, type: "[2]f16", ann: true
     field :small_embedding, TP, type: "[2]i8", ann: true
     field :sparse, TP, type: "{}f16", sparse_knn: [distance_metric: :dot_product]
-    field :token_vectors, TP, type: "[][2]f32", ann: [late_interaction: true]
   end
 
   @doc "A document with `attrs` and the vectors turbopuffer requires."
   def new(attrs) do
     struct(%__MODULE__{embedding: [1.0, 0.0, 0.0], half_embedding: [1.0, 0.0], small_embedding: [1, 0]}, attrs)
+  end
+end
+
+defmodule TP.Test.Tokens do
+  @moduledoc """
+  Per-token vectors for late interaction (docs/turbopuffer/query.md). turbopuffer requires every document to have
+  at least one vector in a vector array attribute, so it can't share a namespace with TP.Test.Everything.
+  """
+  use Ecto.Schema
+  use TP, distance_metric: :cosine_distance
+
+  @primary_key {:id, TP, type: "string", autogenerate: false}
+  schema "tokens" do
+    field :planbook_id, TP, type: "string"
+    field :vectors, TP, type: "[][2]f32", ann: [late_interaction: true]
   end
 end
 

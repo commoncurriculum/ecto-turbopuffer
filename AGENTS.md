@@ -16,6 +16,9 @@ Where the docs and the live API disagree, the live API wins, and a test should p
 - patches can't change attributes turbopuffer embeds natively, not only vectors
 - deleting an id that doesn't exist still counts as deleted, unless the delete has a `delete_condition`
 - a multi-query ignores a top-level `top_k`; a top-level `limit` caps results fused with `rerank_by`
+- a vector array attribute isn't nullable: every document needs at least one vector in it
+- vector arrays come back as lists of floats, even with `vector_encoding: "base64"`
+- recall answers 404 for about 10 seconds after a namespace is created, and with a `rank_by` takes `num` 1 or none
 
 ## The driver
 
