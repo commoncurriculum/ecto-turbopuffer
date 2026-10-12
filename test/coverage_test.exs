@@ -43,7 +43,7 @@ defmodule TP.CoverageTest do
   @search_highlight {"search_test.exs", "takes turbopuffer's options"}
   @search_vectors {"search_test.exs", "ranks f32, f16 and i8 vectors"}
   @search_knn {"search_test.exs", "knn ranks exactly within a filter"}
-  @search_late_interaction {"search_test.exs", "ann ranks vector arrays by late interaction"}
+  @search_late_interaction {"search_test.exs", "ann ranks vector arrays of each element type"}
   @search_sparse {"search_test.exs", "sparse_knn ranks"}
   @search_multi {"search_test.exs", "runs a multi-query"}
   @search_rrf {"search_test.exs", "rerank_by: :rrf fuses"}

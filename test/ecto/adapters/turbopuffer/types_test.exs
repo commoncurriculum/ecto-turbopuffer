@@ -119,8 +119,10 @@ defmodule Ecto.Adapters.Turbopuffer.TypesTest do
   end
 
   # turbopuffer echoes settings back as their full configuration: `true` as every BM25 parameter or an ANN index's
-  # distance metric, and an embedding without dims and dtype, which show in the target's type instead.
+  # distance metric, and an embedding without dims and dtype, which show in the target's type instead. It leaves out
+  # `ann: false`.
   defp mismatches(stored, true, label), do: if(stored in [nil, false], do: ["#{label}: #{inspect(stored)}"], else: [])
+  defp mismatches(nil, false, _label), do: []
 
   defp mismatches(stored, %{} = declared, label) do
     for {key, value} <- declared, key not in ["dims", "dtype"], do: mismatches(stored[key], value, "#{label}.#{key}")

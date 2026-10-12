@@ -154,10 +154,10 @@ defmodule Ecto.Adapters.Turbopuffer.WritesTest do
       {_, [request]} =
         requests(fn -> Repo.update!(Ecto.Changeset.change(tokens, vectors: [[0.5, 0.5], [0.0, 1.0]])) end)
 
-      assert [%{"id" => "a", "vectors" => [[0.5, 0.5], [0.0, 1.0]]}] = request.query["patch_rows"]
+      assert request.query["patch_rows"] == [%{"id" => "a", "vectors" => [[0.5, 0.5], [0.0, 1.0]]}]
       assert Repo.get!(Tokens, "a").vectors == [[0.5, 0.5], [0.0, 1.0]]
 
-      assert_raise ArgumentError, ~r/:vectors: a vector array needs at least one vector/, fn ->
+      assert_raise ArgumentError, ~r/Tokens.vectors: a vector array needs at least one vector/, fn ->
         Repo.insert!(%Tokens{id: "b", vectors: [], half_vectors: [[1.0, 0.0]], small_vectors: [[1, 0]]})
       end
 
