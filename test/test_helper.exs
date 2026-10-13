@@ -9,7 +9,7 @@ case System.get_env("TURBOPUFFER_API_KEY") do
       """
     end
 
-    ExUnit.start(exclude: [:integration])
+    ExUnit.start(exclude: [:integration], capture_log: true)
 
   api_key ->
     Application.put_env(:ecto_turbopuffer, TP.Test.Repo,
@@ -18,5 +18,5 @@ case System.get_env("TURBOPUFFER_API_KEY") do
     )
 
     {:ok, _} = TP.Test.Repo.start_link()
-    ExUnit.start()
+    ExUnit.start(capture_log: true)
 end
