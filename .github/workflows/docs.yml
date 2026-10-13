@@ -1,0 +1,87 @@
+name: turbopuffer docs
+
+# turbopuffer adds API features without a version bump, so this refreshes docs/turbopuffer/ every week. When they
+# change it opens a pull request, and fails if test/coverage_test.exs finds something the adapter doesn't cover yet.
+on:
+  schedule:
+    - cron: "0 14 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  refresh:
+    runs-on: ubuntu-latest
+    env:
+      MIX_ENV: test
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: erlef/setup-beam@v1
+        with:
+          version-type: strict
+          version-file: .tool-versions
+
+      - uses: actions/cache@v4
+        with:
+          path: |
+            deps
+            _build
+          key: ${{ runner.os }}-mix-${{ hashFiles('.tool-versions', 'mix.lock') }}
+
+      - run: scripts/fetch-turbopuffer-docs.sh
+
+      - id: changed
+        run: |
+          git add -A docs/turbopuffer
+          if git diff --cached --quiet; then
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - run: mix deps.get
+        if: steps.changed.outputs.changed == 'true'
+
+      - id: coverage
+        if: steps.changed.outputs.changed == 'true'
+        continue-on-error: true
+        run: mix test test/coverage_test.exs
+        env:
+          TURBOPUFFER_API_KEY: ${{ secrets.TURBOPUFFER_API_KEY }}
+
+      # A pull request opened with GITHUB_TOKEN doesn't run CI, so its body carries the coverage result.
+      - if: steps.changed.outputs.changed == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          COVERAGE: ${{ steps.coverage.outcome }}
+        run: |
+          branch=turbopuffer-docs
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git checkout -B "$branch"
+          git commit -m "Refresh turbopuffer's docs"
+          git push --force origin "$branch"
+
+          if [ "$COVERAGE" = success ]; then
+            result="test/coverage_test.exs passes: the adapter covers everything these docs describe."
+          else
+            result="test/coverage_test.exs fails: these docs describe something the adapter doesn't cover yet. See the workflow run: $GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"
+          fi
+
+          body="Refreshed docs/turbopuffer/ with scripts/fetch-turbopuffer-docs.sh.
+
+          $result"
+
+          if [ -z "$(gh pr list --head "$branch" --state open --json number --jq '.[].number')" ]; then
+            gh pr create --head "$branch" --title "Refresh turbopuffer's docs" --body "$body"
+          else
+            gh pr comment "$branch" --body "$result"
+          fi
+
+      - if: steps.coverage.outcome == 'failure'
+        run: |
+          echo "::error::turbopuffer's docs describe something test/coverage_test.exs doesn't cover yet"
+          exit 1

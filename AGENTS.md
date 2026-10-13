@@ -25,9 +25,9 @@ Where the docs and the live API disagree, the live API wins, and a test should p
 
 ## The driver
 
-HTTP goes through `commoncurriculum/turbopuffer`, a fork of `jallum/turbopuffer`. Its `combined` branch merges
-the fix branches we've proposed upstream. A driver change goes there first (as its own branch and upstream PR),
-then into `combined`; this repo only picks it up with `mix deps.update turbopuffer`. Keep schema-aware behavior,
+HTTP goes through `commoncurriculum/turbopuffer`, a fork of `jallum/turbopuffer`, and `mix.lock` pins the fork's
+`main`. A driver change goes there first, as a PR to the fork's `main`, and a fix upstream would want also gets its own
+branch and PR to `jallum/turbopuffer`. This repo only picks it up with `mix deps.update turbopuffer`. Keep schema-aware behavior,
 like typed decoding, here in `TP`: the driver returns plain maps.
 
 ## Commands
