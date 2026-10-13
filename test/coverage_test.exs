@@ -48,7 +48,6 @@ defmodule TP.CoverageTest do
   @search_multi {"search_test.exs", "runs a multi-query"}
   @search_rrf {"search_test.exs", "rerank_by: :rrf fuses"}
   @namespaces_metadata {"namespaces_test.exs", "metadata describes a namespace"}
-  @namespaces_pinning {"namespaces_test.exs", "pinning reserves compute"}
   @namespaces_read_only {"namespaces_test.exs", "read_only rejects writes"}
   @namespaces_warm {"namespaces_test.exs", "warm_cache hints"}
   @namespaces_list {"namespaces_test.exs", "list_namespaces pages through"}
@@ -234,8 +233,8 @@ defmodule TP.CoverageTest do
               "metadata.md index" => @namespaces_metadata,
               "metadata.md status" => @namespaces_metadata,
               "metadata.md unindexed_bytes" => {:not_applicable, "only present while turbopuffer is indexing"},
-              "metadata.md pinning" => @namespaces_pinning,
-              "metadata.md replicas" => @namespaces_pinning,
+              "metadata.md pinning" => {:untestable, "turbopuffer has no pinning capacity in this region right now"},
+              "metadata.md replicas" => {:untestable, "turbopuffer has no pinning capacity in this region right now"},
               "metadata.md branching" => @namespaces_branch,
               "metadata.md parent" => @namespaces_branch,
               "metadata.md sharding" => @namespaces_shards,
