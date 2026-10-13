@@ -91,13 +91,12 @@ defmodule Ecto.Adapters.Turbopuffer do
   @behaviour Ecto.Adapter.Schema
   @behaviour Ecto.Adapter.Queryable
 
-  require Logger
-
-  alias Ecto.Adapters.Turbopuffer.Plan
+  alias Ecto.Adapters.Turbopuffer.{Plan, Request}
 
   @client_options [:api_key, :region, :base_url, :max_retries, :retry_delay]
   @pools %{default: [size: 10, count: 2]}
-  @queue_time {__MODULE__, :queue_time}
+  # Options every request takes, beside its own.
+  @request_options [:prefix, :log, :telemetry_options]
 
   @doc "The `Turbopuffer.Client` behind a running repo, for calls outside Ecto."
   @spec client(Ecto.Repo.t() | pid() | atom()) :: Turbopuffer.Client.t()
@@ -215,7 +214,7 @@ defmodule Ecto.Adapters.Turbopuffer do
   """
   @spec list_namespaces(Ecto.Repo.t(), keyword()) :: [String.t()]
   def list_namespaces(repo, opts \\ []) do
-    opts = Keyword.validate!(opts, [:prefix, :page_size, :log, :telemetry_options])
+    opts = Keyword.validate!(opts, [:page_size | @request_options])
     meta = meta(repo)
 
     Stream.unfold(:first, fn
@@ -251,17 +250,17 @@ defmodule Ecto.Adapters.Turbopuffer do
   """
   @spec recall(Ecto.Repo.t(), Ecto.Queryable.t(), keyword()) :: map()
   def recall(repo, queryable, opts \\ []) do
-    {timeout, opts} = Keyword.pop(opts, :not_found_timeout, 30_000)
+    opts = Keyword.validate!(opts, [:num, :top_k, not_found_timeout: 30_000] ++ @request_options)
     query = Ecto.Queryable.to_query(queryable)
     query = if prefix = prefix(repo, opts), do: Ecto.Query.put_query_prefix(query, prefix), else: query
     {query, _cast, params} = Ecto.Adapter.Queryable.plan_query(:all, __MODULE__, query)
     {source, _schema, prefix} = elem(query.sources, 0)
     namespace = TP.Namespace.name!(source, prefix)
-    body = Plan.recall(query, params, opts)
-    deadline = System.monotonic_time(:millisecond) + timeout
+    body = Plan.recall(query, params, Keyword.take(opts, [:num, :top_k]))
+    deadline = System.monotonic_time(:millisecond) + opts[:not_found_timeout]
 
     retry_not_found(deadline, fn ->
-      request(meta(repo), :post, "/v1/namespaces/#{namespace}/_debug/recall", body, opts, :recall, namespace,
+      Request.run(meta(repo), :post, "/v1/namespaces/#{namespace}/_debug/recall", body, opts, :recall, namespace,
         respond_async: true
       )
     end)
@@ -297,13 +296,7 @@ defmodule Ecto.Adapters.Turbopuffer do
     repo = Keyword.fetch!(config, :repo)
     {finch, child} = pool(repo, Keyword.get(config, :name, repo), config)
 
-    # Finch reports pool waits only to telemetry, in the process making the request. Attaching again is a no-op.
-    :telemetry.attach_many(
-      @queue_time,
-      [[:finch, :queue, :stop], [:finch, :queue, :exception]],
-      &__MODULE__.handle_queue_event/4,
-      nil
-    )
+    Request.attach()
 
     meta = %{
       client: config |> Keyword.take(@client_options) |> Keyword.put(:finch_name, finch) |> Turbopuffer.Client.new(),
@@ -517,100 +510,23 @@ defmodule Ecto.Adapters.Turbopuffer do
 
   defp request(meta, plan, opts) do
     case plan.kind do
-      :write -> request(meta, :post, "/v2/namespaces/#{plan.namespace}", plan.body, opts, :write, plan.namespace)
-      _query -> request(meta, :post, "/v2/namespaces/#{plan.namespace}/query", plan.body, opts, :query, plan.namespace)
+      :write ->
+        Request.run(meta, :post, "/v2/namespaces/#{plan.namespace}", plan.body, opts, :write, plan.namespace)
+
+      _query ->
+        Request.run(meta, :post, "/v2/namespaces/#{plan.namespace}/query", plan.body, opts, :query, plan.namespace)
     end
   end
-
-  defp request(meta, method, path, body, opts, kind, namespace, client_opts \\ []) do
-    %{client: client, telemetry: {repo, event}} = meta
-    start = System.monotonic_time()
-    client_opts = Keyword.merge(meta.request_opts, client_opts)
-    {result, queue_time} = send_request(client, method, path, body, client_opts)
-    total_time = System.monotonic_time() - start
-    measurements = %{total_time: total_time, queue_time: queue_time, query_time: total_time - queue_time}
-
-    :telemetry.execute(event, measurements, %{
-      type: :ecto_turbopuffer_query,
-      repo: repo,
-      kind: kind,
-      source: namespace,
-      query: redact(body),
-      result: result,
-      options: Keyword.get(opts, :telemetry_options, [])
-    })
-
-    case Keyword.get(opts, :log, meta.log) do
-      false -> :ok
-      level -> Logger.log(level, fn -> log_message(method, path, body, namespace, result, measurements) end)
-    end
-
-    result
-  end
-
-  # Finch raises a bare RuntimeError when no connection frees up within the pool timeout. The queue exception
-  # event before it says that's what happened, rather than some other RuntimeError.
-  defp send_request(client, method, path, body, client_opts) do
-    Process.put(@queue_time, {0, false})
-
-    try do
-      result = client |> Turbopuffer.Client.request(method, path, body, client_opts) |> result()
-      {result, elem(Process.get(@queue_time), 0)}
-    rescue
-      error in RuntimeError ->
-        case Process.get(@queue_time) do
-          {queue_time, true} -> {{:error, %TP.Error{message: String.trim(Exception.message(error))}}, queue_time}
-          _ -> reraise error, __STACKTRACE__
-        end
-    after
-      Process.delete(@queue_time)
-    end
-  end
-
-  @doc false
-  def handle_queue_event(event, measurements, _metadata, _config) do
-    case Process.get(@queue_time) do
-      {queue_time, timed_out} ->
-        Process.put(@queue_time, {queue_time + Map.get(measurements, :duration, 0), timed_out or :exception in event})
-
-      nil ->
-        :ok
-    end
-  end
-
-  defp log_message(method, path, body, namespace, result, measurements) do
-    {status, error} =
-      case result do
-        {:ok, _} -> {"OK", ""}
-        {:error, error} -> {"ERROR", "\n" <> Exception.message(error)}
-      end
-
-    source = if namespace, do: ~s( source="#{namespace}"), else: ""
-    db = "db=#{milliseconds(measurements.query_time)}ms queue=#{milliseconds(measurements.queue_time)}ms"
-    request = method |> Atom.to_string() |> String.upcase()
-    request = if body, do: "#{request} #{path} #{inspect(redact(body))}", else: "#{request} #{path}"
-    "TURBOPUFFER #{status}#{source} #{db}\n#{request}#{error}"
-  end
-
-  defp milliseconds(native) do
-    Float.round(System.convert_time_unit(native, :native, :microsecond) / 1_000, 1)
-  end
-
-  # Telemetry handlers often log requests, so the API key a copy from another organization sends stays out of them.
-  defp redact(%{"copy_from_namespace" => %{"source_api_key" => _} = from} = body),
-    do: %{body | "copy_from_namespace" => %{from | "source_api_key" => "[REDACTED]"}}
-
-  defp redact(body), do: body
 
   defp request!(meta, method, path, body, opts, kind, namespace, client_opts \\ []) do
-    case request(meta, method, path, body, opts, kind, namespace, client_opts) do
+    case Request.run(meta, method, path, body, opts, kind, namespace, client_opts) do
       {:ok, response} -> response
       {:error, error} -> raise error
     end
   end
 
   defp namespace_request!(repo, schema, opts, kind, method, path, body, client_opts \\ []) do
-    opts = Keyword.validate!(opts, [:prefix, :log, :telemetry_options])
+    opts = Keyword.validate!(opts, @request_options)
     namespace = namespace(schema, prefix(repo, opts))
     path = String.replace(path, ":namespace", namespace)
     request!(meta(repo), method, path, body, opts, kind, namespace, client_opts)
@@ -630,23 +546,4 @@ defmodule Ecto.Adapters.Turbopuffer do
 
   defp put(map, _key, nil), do: map
   defp put(map, key, value), do: Map.put(map, key, value)
-
-  defp result({:ok, body}), do: {:ok, body}
-
-  # An operation turbopuffer ran in the background fails with its message alone.
-  defp result({:error, {:http_error, status, body}}) do
-    message =
-      cond do
-        is_map(body) and is_binary(body["error"]) -> body["error"]
-        is_binary(body) -> body
-        true -> inspect(body)
-      end
-
-    {:error, %TP.Error{status: status, message: message}}
-  end
-
-  defp result({:error, reason}) do
-    message = if is_exception(reason), do: Exception.message(reason), else: inspect(reason)
-    {:error, %TP.Error{message: message}}
-  end
 end

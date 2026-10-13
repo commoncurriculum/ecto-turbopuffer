@@ -52,7 +52,7 @@ defmodule Ecto.Adapters.Turbopuffer.Plan do
   """
   def recall(query, params, opts) do
     ctx = context(query, params, :all)
-    opts = Keyword.validate!(opts, [:num, :top_k, :prefix, :log, :telemetry_options])
+    opts = Keyword.validate!(opts, [:num, :top_k])
 
     search =
       case query.order_bys != [] and elem(Expr.rank_by(ctx), 0) do

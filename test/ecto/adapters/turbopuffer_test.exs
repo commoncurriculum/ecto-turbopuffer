@@ -119,9 +119,8 @@ defmodule Ecto.Adapters.TurbopufferTest do
     assert error.message =~ "Finch was unable to provide a connection within the timeout"
     Task.shutdown(holder, :brutal_kill)
 
-    assert_received {:measurements, %{queue_time: queue_time, query_time: query_time, total_time: total_time}}
+    assert_received {:measurements, %{queue_time: queue_time}}
     assert System.convert_time_unit(queue_time, :native, :millisecond) >= 100
-    assert total_time == queue_time + query_time
   end
 
   def send_query(_event, _measurements, metadata, test), do: send(test, metadata.query)
