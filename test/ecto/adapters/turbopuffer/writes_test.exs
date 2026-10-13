@@ -1,7 +1,7 @@
 defmodule Ecto.Adapters.Turbopuffer.WritesTest do
   use TP.Test.Case, async: true
 
-  alias TP.Test.{CardStack, Everything, Lesson, ReviewedCardStack, ShardedStack}
+  alias TP.Test.{CardStack, Everything, Lesson, ReviewedCardStack, ShardedStack, Tokens}
 
   defp card_stack(id, attrs \\ []) do
     struct(%CardStack{id: id, title: "Fractions", position: 1, vector: [1.0, 0.0, 0.0]}, attrs)
@@ -145,6 +145,29 @@ defmodule Ecto.Adapters.Turbopuffer.WritesTest do
 
       Repo.insert!(Ecto.Changeset.apply_changes(changeset), on_conflict: :replace_all)
       assert Repo.get!(Lesson, lesson.id).markdown == "Plants turn sunlight into sugar."
+    end
+
+    test "patches vector arrays, which turbopuffer can patch unlike [N] vectors" do
+      tokens =
+        Repo.insert!(%Tokens{id: "a", vectors: [[1.0, 0.0]], half_vectors: [[1.0, 0.0]], small_vectors: [[1, 0]]})
+
+      {_, [request]} =
+        requests(fn -> Repo.update!(Ecto.Changeset.change(tokens, vectors: [[0.5, 0.5], [0.0, 1.0]])) end)
+
+      assert request.query["patch_rows"] == [%{"id" => "a", "vectors" => [[0.5, 0.5], [0.0, 1.0]]}]
+      assert Repo.get!(Tokens, "a").vectors == [[0.5, 0.5], [0.0, 1.0]]
+
+      assert_raise ArgumentError, ~r/Tokens.vectors: a vector array needs at least one vector/, fn ->
+        Repo.insert!(%Tokens{id: "b", vectors: [], half_vectors: [[1.0, 0.0]], small_vectors: [[1, 0]]})
+      end
+
+      assert_raise ArgumentError, ~r/Tokens.vectors: a vector array needs at least one vector/, fn ->
+        Repo.update!(Ecto.Changeset.change(tokens, vectors: []))
+      end
+
+      assert_raise ArgumentError, ~r/without :half_vectors: turbopuffer upserts must include every vector array/, fn ->
+        Repo.insert!(%Tokens{id: "b", vectors: [[1.0, 0.0]], small_vectors: [[1, 0]]})
+      end
     end
 
     test "raises when the document is gone, or an optimistic lock doesn't match" do

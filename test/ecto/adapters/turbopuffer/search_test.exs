@@ -1,7 +1,7 @@
 defmodule Ecto.Adapters.Turbopuffer.SearchTest do
   use TP.Test.Case, async: true
 
-  alias TP.Test.{CardStack, Everything}
+  alias TP.Test.{CardStack, Everything, Tokens, UnindexedTokens}
 
   setup do
     Repo.insert_all(CardStack, [
@@ -232,6 +232,53 @@ defmodule Ecto.Adapters.Turbopuffer.SearchTest do
                    limit: 2,
                    select: {e.id, e.small_embedding}
                )
+    end
+
+    test "ann ranks vector arrays of each element type by late interaction, and knn ranks them exactly" do
+      Repo.insert_all(Tokens, [
+        %{
+          id: "x",
+          planbook_id: "p1",
+          vectors: [[1.0, 0.0], [0.9, 0.1]],
+          half_vectors: [[1.0, 0.0], [0.9, 0.1]],
+          small_vectors: [[127, 0], [100, 10]]
+        },
+        %{
+          id: "y",
+          planbook_id: "p1",
+          vectors: [[0.0, 1.0], [0.1, 0.9], [0.5, 0.5]],
+          half_vectors: [[0.0, 1.0], [0.1, 0.9], [0.5, 0.5]],
+          small_vectors: [[0, 127], [10, 100], [60, 60]]
+        },
+        %{id: "z", planbook_id: "p2", vectors: [[0.7, 0.7]], half_vectors: [[0.7, 0.7]], small_vectors: [[90, 90]]}
+      ])
+
+      query = [[0.0, 1.0], [0.2, 0.8]]
+
+      {rows, [request]} =
+        requests(fn ->
+          Repo.all(from t in Tokens, order_by: ann(t.vectors, ^query), limit: 3, select: {t.id, t.vectors})
+        end)
+
+      assert request.query["rank_by"] == ["vectors", "ANN", query]
+      assert Enum.map(rows, &elem(&1, 0)) == ~w(y z x)
+      assert hd(rows) == {"y", [[0.0, 1.0], [0.1, 0.9], [0.5, 0.5]]}
+
+      assert ids(from t in Tokens, order_by: ann(t.half_vectors, ^query), limit: 3) == ~w(y z x)
+      assert ids(from t in Tokens, order_by: ann(t.small_vectors, ^[[0, 127], [25, 100]]), limit: 3) == ~w(y z x)
+
+      exact = from t in Tokens, where: t.planbook_id == "p1", order_by: knn(t.vectors, ^query), limit: 2, select: t.id
+      assert Repo.all(exact) == ~w(y x)
+    end
+
+    test "knn ranks vector arrays stored without an index, which ann can't" do
+      Repo.insert_all(UnindexedTokens, [%{id: "x", vectors: [[1.0, 0.0]]}, %{id: "y", vectors: [[0.0, 1.0]]}])
+
+      assert ids(from t in UnindexedTokens, order_by: knn(t.vectors, ^[[0.1, 0.9]]), limit: 2) == ~w(y x)
+
+      assert_raise Ecto.QueryError, ~r/:vectors has no ANN index/, fn ->
+        Repo.all(from t in UnindexedTokens, order_by: ann(t.vectors, ^[[0.1, 0.9]]), limit: 2)
+      end
     end
 
     test "knn ranks exactly within a filter, and vector_distance selects a distance" do

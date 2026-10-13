@@ -1,7 +1,7 @@
 defmodule Ecto.Adapters.Turbopuffer.TypesTest do
   use TP.Test.Case, async: true
 
-  alias TP.Test.{Everything, Lesson, MultiEmbed, ShardedStack, TextSettings}
+  alias TP.Test.{Everything, Lesson, MultiEmbed, ShardedStack, TextSettings, Tokens, UnindexedTokens}
 
   test "every type round-trips through turbopuffer, normalized the way turbopuffer stores it" do
     written =
@@ -49,6 +49,23 @@ defmodule Ecto.Adapters.Turbopuffer.TypesTest do
     for field <- Everything.__schema__(:fields) do
       assert Map.fetch!(loaded, field) == Map.fetch!(expected, field), "#{field} didn't round-trip"
     end
+
+    # turbopuffer returns vector arrays as lists of numbers, even when asked for base64.
+    Repo.insert!(%Tokens{
+      id: "doc",
+      vectors: [[1, 0], [0.5, -0.25]],
+      half_vectors: [[0.5, 1.25]],
+      small_vectors: [[-128, 127], [0, 1]]
+    })
+
+    {tokens, [request]} = requests(fn -> Repo.get!(Tokens, "doc") end)
+    assert request.query["vector_encoding"] == "base64"
+    assert tokens.vectors == [[1.0, 0.0], [0.5, -0.25]]
+    assert tokens.half_vectors == [[0.5, 1.25]]
+    assert tokens.small_vectors == [[-128, 127], [0, 1]]
+
+    Repo.insert!(%UnindexedTokens{id: "doc", vectors: [[0.5, 0.25]]})
+    assert Repo.get!(UnindexedTokens, "doc").vectors == [[0.5, 0.25]]
   end
 
   test "turbopuffer stores the schema TP declares, for every option" do
@@ -57,9 +74,11 @@ defmodule Ecto.Adapters.Turbopuffer.TypesTest do
     Repo.insert!(%ShardedStack{id: 1})
     Repo.insert!(%MultiEmbed{id: "m", default: "a", quantized: "b", declared: "c", wide: "d"})
     Repo.insert!(%TextSettings{id: "t"})
+    Repo.insert!(%Tokens{id: "t", vectors: [[1.0, 0.0]], half_vectors: [[1.0, 0.0]], small_vectors: [[1, 0]]})
+    Repo.insert!(%UnindexedTokens{id: "t", vectors: [[1.0, 0.0]]})
 
     mismatches =
-      for schema <- [Everything, Lesson, ShardedStack, MultiEmbed, TextSettings],
+      for schema <- [Everything, Lesson, ShardedStack, MultiEmbed, TextSettings, Tokens, UnindexedTokens],
           stored = Turbopuffer.metadata(Repo, schema)["schema"],
           namespace = TP.Namespace.new(schema),
           attribute <- namespace.attributes,
@@ -100,8 +119,10 @@ defmodule Ecto.Adapters.Turbopuffer.TypesTest do
   end
 
   # turbopuffer echoes settings back as their full configuration: `true` as every BM25 parameter or an ANN index's
-  # distance metric, and an embedding without dims and dtype, which show in the target's type instead.
+  # distance metric, and an embedding without dims and dtype, which show in the target's type instead. It leaves out
+  # `ann: false`.
   defp mismatches(stored, true, label), do: if(stored in [nil, false], do: ["#{label}: #{inspect(stored)}"], else: [])
+  defp mismatches(nil, false, _label), do: []
 
   defp mismatches(stored, %{} = declared, label) do
     for {key, value} <- declared, key not in ["dims", "dtype"], do: mismatches(stored[key], value, "#{label}.#{key}")

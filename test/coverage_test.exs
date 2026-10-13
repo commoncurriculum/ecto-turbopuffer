@@ -43,11 +43,11 @@ defmodule TP.CoverageTest do
   @search_highlight {"search_test.exs", "takes turbopuffer's options"}
   @search_vectors {"search_test.exs", "ranks f32, f16 and i8 vectors"}
   @search_knn {"search_test.exs", "knn ranks exactly within a filter"}
+  @search_late_interaction {"search_test.exs", "ann ranks vector arrays of each element type"}
   @search_sparse {"search_test.exs", "sparse_knn ranks"}
   @search_multi {"search_test.exs", "runs a multi-query"}
   @search_rrf {"search_test.exs", "rerank_by: :rrf fuses"}
   @namespaces_metadata {"namespaces_test.exs", "metadata describes a namespace"}
-  @namespaces_pinning {"namespaces_test.exs", "pinning reserves compute"}
   @namespaces_read_only {"namespaces_test.exs", "read_only rejects writes"}
   @namespaces_warm {"namespaces_test.exs", "warm_cache hints"}
   @namespaces_list {"namespaces_test.exs", "list_namespaces pages through"}
@@ -221,8 +221,7 @@ defmodule TP.CoverageTest do
               "rank RRF" => @search_rrf,
               "rank last_as_prefix" => @search_prefix,
               "rank filters" => @search_filter_score,
-              "rank late_interaction" =>
-                {:untestable, "vector arrays are in private beta, and turbopuffer rejects them for this account"},
+              "rank late_interaction" => @search_late_interaction,
               "metadata.md Metadata" => {:not_applicable, "a latency figure, not a field"},
               "metadata.md schema" => @types_schema,
               "metadata.md approx_logical_bytes" => @namespaces_metadata,
@@ -234,8 +233,8 @@ defmodule TP.CoverageTest do
               "metadata.md index" => @namespaces_metadata,
               "metadata.md status" => @namespaces_metadata,
               "metadata.md unindexed_bytes" => {:not_applicable, "only present while turbopuffer is indexing"},
-              "metadata.md pinning" => @namespaces_pinning,
-              "metadata.md replicas" => @namespaces_pinning,
+              "metadata.md pinning" => {:untestable, "turbopuffer has no pinning capacity in this region right now"},
+              "metadata.md replicas" => {:untestable, "turbopuffer has no pinning capacity in this region right now"},
               "metadata.md branching" => @namespaces_branch,
               "metadata.md parent" => @namespaces_branch,
               "metadata.md sharding" => @namespaces_shards,
@@ -250,16 +249,10 @@ defmodule TP.CoverageTest do
               "recall.md num" => @namespaces_recall,
               "recall.md top_k" => @namespaces_recall,
               "recall.md filters" => @namespaces_recall,
-              "recall.md rank_by" =>
-                {:not_supported,
-                 "turbopuffer answers a recall with a rank_by with a 404 for a namespace that exists, with num 1 or " <>
-                   "its default and before or after the index is built, and one with kNN with 'query type not " <>
-                   "supported', so recall/3 rejects an order_by (plan_test.exs)"},
+              "recall.md rank_by" => @namespaces_recall,
               "recall.md avg_recall" => @namespaces_recall,
               "recall.md avg_exhaustive_count" => @namespaces_recall,
               "recall.md avg_ann_count" => @namespaces_recall,
-              "type [][N]f32" =>
-                {:untestable, "vector arrays are in private beta, and turbopuffer rejects them for this account"},
               "api async requests" => @namespaces_copy,
               "api error responses" => @query_errors,
               "api 429" =>
@@ -270,7 +263,7 @@ defmodule TP.CoverageTest do
             |> Map.merge(
               Map.new(
                 ~w(string int uint float uuid datetime bool bytes []string []int []uint []float []uuid []datetime []bool
-                   [N]f32 [N]f16 [N]i8 {}f16),
+                   [N]f32 [N]f16 [N]i8 [][N]f32 {}f16),
                 &{"type #{&1}", @types_round_trip}
               )
             )

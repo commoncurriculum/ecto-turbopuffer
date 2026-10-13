@@ -24,6 +24,8 @@ defmodule TP.TypesTest do
           "[512]f16" => {:vector, 512, :f16},
           "[512]i8" => {:vector, 512, :i8},
           "[][128]f32" => {:multi_vector, 128, :f32},
+          "[][128]f16" => {:multi_vector, 128, :f16},
+          "[][128]i8" => {:multi_vector, 128, :i8},
           "{}f16" => {:sparse_vector, :f16}
         } do
       assert TP.Types.decode(string) == decoded
@@ -44,8 +46,8 @@ defmodule TP.TypesTest do
           "[abc]f32",
           "[512]f64",
           "[512]",
-          "[][128]f16",
-          "[][128]i8",
+          "[][128]f64",
+          "[][0]f32",
           "{}f32",
           ""
         ] do

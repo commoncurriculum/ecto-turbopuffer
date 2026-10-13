@@ -16,6 +16,12 @@ Where the docs and the live API disagree, the live API wins, and a test should p
 - patches can't change attributes turbopuffer embeds natively, not only vectors
 - deleting an id that doesn't exist still counts as deleted, unless the delete has a `delete_condition`
 - a multi-query ignores a top-level `top_k`; a top-level `limit` caps results fused with `rerank_by`
+- vector arrays take f16 and i8 elements as well as f32, can be patched, and aren't nullable: every document needs
+  at least one vector in each
+- vector arrays come back as lists of numbers, even with `vector_encoding: "base64"`
+- a namespace whose only vectors are arrays with `ann: false` rejects a `distance_metric`
+- recall with a `rank_by` answers 404 for about 10 seconds after a namespace is created, takes `num` 1 or none,
+  and only measures `ANN` of a literal vector
 
 ## The driver
 

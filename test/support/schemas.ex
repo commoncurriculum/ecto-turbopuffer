@@ -1,7 +1,7 @@
 defmodule TP.Test.Everything do
   @moduledoc """
-  Every turbopuffer type the API generally offers, and every schema option but native embedding (see
-  TP.Test.Embedding). Multi-vectors are in private beta, so they're left out.
+  Every turbopuffer type, and every schema option but native embedding (see TP.Test.Embedding) and vector arrays
+  (see TP.Test.Tokens).
   """
   use Ecto.Schema
   use TP, distance_metric: :cosine_distance
@@ -52,6 +52,35 @@ defmodule TP.Test.Everything do
   @doc "A document with `attrs` and the vectors turbopuffer requires."
   def new(attrs) do
     struct(%__MODULE__{embedding: [1.0, 0.0, 0.0], half_embedding: [1.0, 0.0], small_embedding: [1, 0]}, attrs)
+  end
+end
+
+defmodule TP.Test.Tokens do
+  @moduledoc """
+  Per-token vectors for late interaction (docs/turbopuffer/query.md), of each element type turbopuffer takes.
+  turbopuffer requires every document to have at least one vector in each vector array attribute, so they can't
+  share a namespace with TP.Test.Everything.
+  """
+  use Ecto.Schema
+  use TP, distance_metric: :cosine_distance
+
+  @primary_key {:id, TP, type: "string", autogenerate: false}
+  schema "tokens" do
+    field :planbook_id, TP, type: "string"
+    field :vectors, TP, type: "[][2]f32", ann: [late_interaction: true]
+    field :half_vectors, TP, type: "[][2]f16", ann: [late_interaction: true]
+    field :small_vectors, TP, type: "[][2]i8", ann: [late_interaction: true]
+  end
+end
+
+defmodule TP.Test.UnindexedTokens do
+  @moduledoc "Vector arrays stored without an index, which takes no distance metric."
+  use Ecto.Schema
+  use TP
+
+  @primary_key {:id, TP, type: "string", autogenerate: false}
+  schema "unindexed_tokens" do
+    field :vectors, TP, type: "[][2]f32", ann: false
   end
 end
 
@@ -187,9 +216,9 @@ defmodule TP.Test.Embedding do
     {"openai/text-embedding-3-large", 3072, [256, 512, 1024, 1536, 3072], false},
     {"openai/text-embedding-3-small", 1536, [256, 512, 768, 1024, 1536], false},
     {"openai/text-embedding-ada-002", 1536, [1536], false},
-    {"qwen/qwen3-embedding-0p6b", 1024, [256, 384, 512, 768, 1024], false},
-    {"qwen/qwen3-embedding-4b", 1024, [512, 1024, 1536, 2048, 2560], false},
-    {"qwen/qwen3-embedding-8b", 1024, [512, 1024, 1536, 2048, 3072, 4096], false},
+    {"qwen/qwen3-embedding-0p6b", 1024, [256, 384, 512, 768, 1024], true},
+    {"qwen/qwen3-embedding-4b", 1024, [512, 1024, 1536, 2048, 2560], true},
+    {"qwen/qwen3-embedding-8b", 1024, [512, 1024, 1536, 2048, 3072, 4096], true},
     {"voyage/voyage-4", 1024, [256, 512, 1024, 2048], true},
     {"voyage/voyage-4-large", 1024, [256, 512, 1024, 2048], true},
     {"voyage/voyage-4-lite", 1024, [256, 512, 1024, 2048], true},
