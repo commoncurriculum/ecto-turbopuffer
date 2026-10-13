@@ -83,7 +83,7 @@ defmodule TP.Namespace do
         raise ArgumentError,
               "#{inspect(module)} embeds #{length(embedded)} attributes; turbopuffer allows #{@max_embedded_attributes}"
 
-      indexed_vector_columns(attributes) != [] and namespace.distance_metric == nil ->
+      Enum.any?(attributes, &indexed?/1) and namespace.distance_metric == nil ->
         raise ArgumentError,
               "#{inspect(module)} has vector columns, so turbopuffer needs a distance metric: " <>
                 "add `use TP, distance_metric: :cosine_distance` (or :euclidean_squared)"
@@ -136,10 +136,6 @@ defmodule TP.Namespace do
       check_limits!(ns, attribute, value)
 
       cond do
-        value == [] and match?({:multi_vector, _, _}, attribute.type) ->
-          raise ArgumentError,
-                "cannot write #{inspect(ns.module)}.#{attribute.field}: a vector array needs at least one vector"
-
         value != nil ->
           row
 
@@ -204,16 +200,9 @@ defmodule TP.Namespace do
     Enum.uniq(vectors ++ targets)
   end
 
-  # A vector array stored with `ann: false` has no index, and turbopuffer rejects a distance metric for a namespace
-  # without one.
-  defp indexed_vector_columns(attributes) do
-    unindexed =
-      for %{type: {:multi_vector, _, _}, name: name} = attribute <- attributes,
-          attribute.options[:ann] in [nil, false],
-          do: name
-
-    vector_columns(attributes) -- unindexed
-  end
+  # turbopuffer rejects a distance metric for a namespace with no vector index, as when its only vectors are arrays
+  # stored with `ann: false`. Embedded text is always indexed.
+  defp indexed?(attribute), do: attribute.embed != nil or TP.Attribute.missing(attribute, :ann) == nil
 
   # An embed that names its vector attribute has to name a declared vector it fits, so that queries can read it.
   defp validate_embed_target!(%{embed: %{explicit_target?: false}}, _ns), do: :ok
@@ -278,6 +267,8 @@ defmodule TP.Namespace do
       size(Enum.max(sizes, fn -> 0 end), attribute.filterable)
     end
   end
+
+  defp limits([], %{type: {:multi_vector, _, _}}), do: {:error, "a vector array needs at least one vector"}
 
   defp limits(weights, %{type: {:sparse_vector, _}}) when map_size(weights) > @max_sparse_dims do
     {:error, "turbopuffer sparse vectors can have at most #{@max_sparse_dims} dimensions"}

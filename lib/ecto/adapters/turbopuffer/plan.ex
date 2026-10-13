@@ -53,23 +53,30 @@ defmodule Ecto.Adapters.Turbopuffer.Plan do
   def recall(query, params, opts) do
     ctx = context(query, params, :all)
     opts = Keyword.validate!(opts, [:num, :top_k, :prefix, :telemetry_options])
-    rank_by = if query.order_bys != [], do: elem(Expr.rank_by(ctx), 0)
 
-    if rank_by && not match?([_field, "ANN", [value | _]] when not is_binary(value), rank_by) do
-      Expr.error!(query, "turbopuffer's recall only measures an ann/2 search of a vector, not embedded text")
-    end
+    search =
+      case query.order_bys != [] and elem(Expr.rank_by(ctx), 0) do
+        false ->
+          put(%{}, "num", opts[:num])
 
-    if rank_by && opts[:num] not in [nil, 1] do
-      raise ArgumentError,
-            "recall measures one search when it's given an order_by, so :num must be 1, got: #{inspect(opts[:num])}"
-    end
+        # A vector of numbers, or a list of them for a vector array, but not ["Embed", text].
+        [_attribute, "ANN", [element | _]] = rank_by when is_number(element) or is_list(element) ->
+          if opts[:num] not in [nil, 1] do
+            raise ArgumentError,
+                  "recall measures one search when it's given an order_by, so :num must be 1, got: " <>
+                    inspect(opts[:num])
+          end
 
-    %{}
-    |> put("rank_by", rank_by)
+          # num defaults to 25, which turbopuffer rejects with a rank_by.
+          %{"rank_by" => rank_by, "num" => 1}
+
+        _rank_by ->
+          Expr.error!(query, "turbopuffer's recall only measures an ann/2 search of a vector, not embedded text")
+      end
+
+    search
     |> put("filters", filters(ctx, nil))
     |> put("top_k", opts[:top_k] || if(query.limit, do: limit(ctx)))
-    # num defaults to 25, which turbopuffer rejects with a rank_by.
-    |> put("num", if(rank_by, do: 1, else: opts[:num]))
   end
 
   @doc """

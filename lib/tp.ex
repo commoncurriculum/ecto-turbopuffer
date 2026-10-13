@@ -132,8 +132,7 @@ defmodule TP do
   defp ecto_type({:array, element}), do: {:array, ecto_type(element)}
   defp ecto_type({:vector, _dims, :i8}), do: {:array, :integer}
   defp ecto_type({:vector, _dims, _element}), do: {:array, :float}
-  defp ecto_type({:multi_vector, _dims, :i8}), do: {:array, {:array, :integer}}
-  defp ecto_type({:multi_vector, _dims, _element}), do: {:array, {:array, :float}}
+  defp ecto_type({:multi_vector, dims, element}), do: {:array, ecto_type({:vector, dims, element})}
   defp ecto_type({:sparse_vector, _element}), do: {:map, :float}
 
   defp cast_value(nil, _type), do: {:ok, nil}

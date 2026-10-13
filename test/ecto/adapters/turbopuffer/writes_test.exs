@@ -161,6 +161,10 @@ defmodule Ecto.Adapters.Turbopuffer.WritesTest do
         Repo.insert!(%Tokens{id: "b", vectors: [], half_vectors: [[1.0, 0.0]], small_vectors: [[1, 0]]})
       end
 
+      assert_raise ArgumentError, ~r/Tokens.vectors: a vector array needs at least one vector/, fn ->
+        Repo.update!(Ecto.Changeset.change(tokens, vectors: []))
+      end
+
       assert_raise ArgumentError, ~r/without :half_vectors: turbopuffer upserts must include every vector array/, fn ->
         Repo.insert!(%Tokens{id: "b", vectors: [[1.0, 0.0]], small_vectors: [[1, 0]]})
       end
