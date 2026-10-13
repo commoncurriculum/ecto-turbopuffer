@@ -182,6 +182,7 @@ defmodule Ecto.Adapters.Turbopuffer.NamespacesTest do
       end)
 
     assert error.status == 404
-    assert length(requests) in 3..4
+    # Retries wait 500ms, then 1s, so a 2s timeout fits three requests, or two when turbopuffer answers slowly.
+    assert length(requests) in 2..3
   end
 end
