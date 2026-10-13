@@ -100,7 +100,8 @@ from c in CardStack,
 ## Development
 
 turbopuffer's documentation, as the Markdown it publishes, is in [`docs/turbopuffer/`](docs/turbopuffer). Refresh it
-with `scripts/fetch-turbopuffer-docs.sh`.
+with `scripts/fetch-turbopuffer-docs.sh`. A weekly workflow ([`docs.yml`](.github/workflows/docs.yml)) does that too,
+opening a pull request when the docs change and failing when `test/coverage_test.exs` finds something new.
 
 The tests run against real turbopuffer, as its [testing guide](docs/turbopuffer/testing.md) recommends, when
 `TURBOPUFFER_API_KEY` is set. Each writes to its own namespaces and deletes them afterwards. CI requires the key.
