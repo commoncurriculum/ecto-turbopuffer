@@ -15,8 +15,9 @@ defmodule Ecto.Adapters.Turbopuffer do
   `:max_retries` and `:retry_delay`. `:receive_timeout` sets how long to wait for a response, 60 seconds by
   default. Each named repo has its own Finch connection pool, which `:pools` configures with Finch's `:pools`
   option (`%{default: [size: 10, count: 2]}` by default). Repos started with `name: nil`, like dynamic repos, share
-  the driver's pool. For calls outside Ecto, `client/1` returns the repo's `Turbopuffer.Client`. A failed request
-  raises `TP.Error`.
+  the driver's pool. `:pool_timeout` sets how long a request waits for a connection from the pool, 5 seconds by
+  default. For calls outside Ecto, `client/1` returns the repo's `Turbopuffer.Client`. A failed request raises
+  `TP.Error`, including one that times out waiting for a connection.
 
   ## Namespaces
 
@@ -78,17 +79,24 @@ defmodule Ecto.Adapters.Turbopuffer do
   `!=`, `not in`, and `not` around other filters do match nil, as turbopuffer's inverse operators do; add
   `not is_nil(field)` to exclude it.
 
-  Every request emits the repo's `[..., :query]` telemetry event.
+  ## Logging and telemetry
+
+  Like Ecto's SQL adapters, every request is logged at the repo's `:log` level (`:debug` by default, `false` for
+  none), which a call's `log:` option overrides, and emits the repo's `[..., :query]` telemetry event. Its
+  measurements, in native time units, are `:queue_time`, spent waiting for a connection from the pool,
+  `:query_time`, the rest of the request including retries, and `:total_time`, their sum.
   """
 
   @behaviour Ecto.Adapter
   @behaviour Ecto.Adapter.Schema
   @behaviour Ecto.Adapter.Queryable
 
-  alias Ecto.Adapters.Turbopuffer.Plan
+  alias Ecto.Adapters.Turbopuffer.{Plan, Request}
 
   @client_options [:api_key, :region, :base_url, :max_retries, :retry_delay]
   @pools %{default: [size: 10, count: 2]}
+  # Options every request takes, beside its own.
+  @request_options [:prefix, :log, :telemetry_options]
 
   @doc "The `Turbopuffer.Client` behind a running repo, for calls outside Ecto."
   @spec client(Ecto.Repo.t() | pid() | atom()) :: Turbopuffer.Client.t()
@@ -206,7 +214,7 @@ defmodule Ecto.Adapters.Turbopuffer do
   """
   @spec list_namespaces(Ecto.Repo.t(), keyword()) :: [String.t()]
   def list_namespaces(repo, opts \\ []) do
-    opts = Keyword.validate!(opts, [:prefix, :page_size])
+    opts = Keyword.validate!(opts, [:page_size | @request_options])
     meta = meta(repo)
 
     Stream.unfold(:first, fn
@@ -220,7 +228,7 @@ defmodule Ecto.Adapters.Turbopuffer do
           |> URI.encode_query()
 
         path = "/v1/namespaces" <> if(query == "", do: "", else: "?" <> query)
-        page = request!(meta, :get, path, nil, [], :list_namespaces, nil)
+        page = request!(meta, :get, path, nil, opts, :list_namespaces, nil)
         names = Enum.map(page["namespaces"], & &1["id"])
         {names, if(names != [], do: page["next_cursor"])}
     end)
@@ -242,17 +250,17 @@ defmodule Ecto.Adapters.Turbopuffer do
   """
   @spec recall(Ecto.Repo.t(), Ecto.Queryable.t(), keyword()) :: map()
   def recall(repo, queryable, opts \\ []) do
-    {timeout, opts} = Keyword.pop(opts, :not_found_timeout, 30_000)
+    opts = Keyword.validate!(opts, [:num, :top_k, not_found_timeout: 30_000] ++ @request_options)
     query = Ecto.Queryable.to_query(queryable)
     query = if prefix = prefix(repo, opts), do: Ecto.Query.put_query_prefix(query, prefix), else: query
     {query, _cast, params} = Ecto.Adapter.Queryable.plan_query(:all, __MODULE__, query)
     {source, _schema, prefix} = elem(query.sources, 0)
     namespace = TP.Namespace.name!(source, prefix)
-    body = Plan.recall(query, params, opts)
-    deadline = System.monotonic_time(:millisecond) + timeout
+    body = Plan.recall(query, params, Keyword.take(opts, [:num, :top_k]))
+    deadline = System.monotonic_time(:millisecond) + opts[:not_found_timeout]
 
     retry_not_found(deadline, fn ->
-      request(meta(repo), :post, "/v1/namespaces/#{namespace}/_debug/recall", body, opts, :recall, namespace,
+      Request.run(meta(repo), :post, "/v1/namespaces/#{namespace}/_debug/recall", body, opts, :recall, namespace,
         respond_async: true
       )
     end)
@@ -288,9 +296,15 @@ defmodule Ecto.Adapters.Turbopuffer do
     repo = Keyword.fetch!(config, :repo)
     {finch, child} = pool(repo, Keyword.get(config, :name, repo), config)
 
+    Request.attach()
+
     meta = %{
       client: config |> Keyword.take(@client_options) |> Keyword.put(:finch_name, finch) |> Turbopuffer.Client.new(),
-      request_opts: [receive_timeout: Keyword.get(config, :receive_timeout, 60_000)],
+      request_opts: [
+        receive_timeout: Keyword.get(config, :receive_timeout, 60_000),
+        pool_timeout: Keyword.get(config, :pool_timeout, 5_000)
+      ],
+      log: Keyword.get(config, :log, :debug),
       telemetry: {repo, Keyword.fetch!(config, :telemetry_prefix) ++ [:query]}
     }
 
@@ -496,45 +510,23 @@ defmodule Ecto.Adapters.Turbopuffer do
 
   defp request(meta, plan, opts) do
     case plan.kind do
-      :write -> request(meta, :post, "/v2/namespaces/#{plan.namespace}", plan.body, opts, :write, plan.namespace)
-      _query -> request(meta, :post, "/v2/namespaces/#{plan.namespace}/query", plan.body, opts, :query, plan.namespace)
+      :write ->
+        Request.run(meta, :post, "/v2/namespaces/#{plan.namespace}", plan.body, opts, :write, plan.namespace)
+
+      _query ->
+        Request.run(meta, :post, "/v2/namespaces/#{plan.namespace}/query", plan.body, opts, :query, plan.namespace)
     end
   end
 
-  defp request(meta, method, path, body, opts, kind, namespace, client_opts \\ []) do
-    %{client: client, telemetry: {repo, event}} = meta
-    start = System.monotonic_time()
-    client_opts = Keyword.merge(meta.request_opts, client_opts)
-    result = client |> Turbopuffer.Client.request(method, path, body, client_opts) |> result()
-
-    :telemetry.execute(event, %{total_time: System.monotonic_time() - start}, %{
-      type: :ecto_turbopuffer_query,
-      repo: repo,
-      kind: kind,
-      source: namespace,
-      query: redact(body),
-      result: result,
-      options: Keyword.get(opts, :telemetry_options, [])
-    })
-
-    result
-  end
-
-  # Telemetry handlers often log requests, so the API key a copy from another organization sends stays out of them.
-  defp redact(%{"copy_from_namespace" => %{"source_api_key" => _} = from} = body),
-    do: %{body | "copy_from_namespace" => %{from | "source_api_key" => "[REDACTED]"}}
-
-  defp redact(body), do: body
-
   defp request!(meta, method, path, body, opts, kind, namespace, client_opts \\ []) do
-    case request(meta, method, path, body, opts, kind, namespace, client_opts) do
+    case Request.run(meta, method, path, body, opts, kind, namespace, client_opts) do
       {:ok, response} -> response
       {:error, error} -> raise error
     end
   end
 
   defp namespace_request!(repo, schema, opts, kind, method, path, body, client_opts \\ []) do
-    opts = Keyword.validate!(opts, [:prefix, :telemetry_options])
+    opts = Keyword.validate!(opts, @request_options)
     namespace = namespace(schema, prefix(repo, opts))
     path = String.replace(path, ":namespace", namespace)
     request!(meta(repo), method, path, body, opts, kind, namespace, client_opts)
@@ -554,23 +546,4 @@ defmodule Ecto.Adapters.Turbopuffer do
 
   defp put(map, _key, nil), do: map
   defp put(map, key, value), do: Map.put(map, key, value)
-
-  defp result({:ok, body}), do: {:ok, body}
-
-  # An operation turbopuffer ran in the background fails with its message alone.
-  defp result({:error, {:http_error, status, body}}) do
-    message =
-      cond do
-        is_map(body) and is_binary(body["error"]) -> body["error"]
-        is_binary(body) -> body
-        true -> inspect(body)
-      end
-
-    {:error, %TP.Error{status: status, message: message}}
-  end
-
-  defp result({:error, reason}) do
-    message = if is_exception(reason), do: Exception.message(reason), else: inspect(reason)
-    {:error, %TP.Error{message: message}}
-  end
 end
