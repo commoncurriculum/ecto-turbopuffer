@@ -8,7 +8,9 @@ Creates, updates, or deletes documents.
 - Upsert latency (512kb docs): p50=165ms, p90=248ms, p99=850ms
 
 A `:namespace` is an isolated set of documents and is implicitly created when
-the first document is inserted. Namespace names must match `[A-Za-z0-9-_.]{1,128}`.
+the first document is inserted, or explicitly created with
+[`create_namespace`](#param-create_namespace). Namespace names must match
+`[A-Za-z0-9-_.]{1,128}`.
 
 We recommend creating a namespace per isolated document space instead of filtering when possible.
 Large batches of writes are highly encouraged to maximize throughput and minimize cost. Write requests
@@ -436,6 +438,33 @@ branching vs `copy_from_namespace`.
 
 ---
 
+**create_namespace** boolean
+default: unset
+
+When set to `true`, a namespace is created, even if the request writes no
+documents. Creating an empty namespace requires the `id` type to be declared in
+[`schema`](#param-schema). Has no effect if the namespace already exists.
+
+When set to `false`, a namespace is never created by this write, and a 404 is
+returned if the namespace does not exist. Has no effect if the namespace already
+exists.
+
+When omitted, a namespace is implicitly created by the first request that writes
+documents.
+
+Example (create an empty namespace):
+```json
+{
+  "create_namespace": true,
+  "schema": {
+    "id": "string"
+    // only the id type is required, but the entire schema may be specified
+  }
+}
+```
+
+---
+
 **schema** object
 
 By default, the schema is inferred from the passed data. See [Schema](#schema) below.
@@ -531,7 +560,7 @@ starting from the indexing position of whichever shard is furthest behind.
 
 Only supported for upserts and delete-by-id. Not supported for patch-by-id, patch-by-filter, delete-by-filter, or [conditional writes](#conditional-writes), since those operations require a strongly consistent read of existing rows.
 
-Indexing progress can be tracked through the `unindexed_bytes` field in the [metadata endpoint](/docs/metadata#responsefield-index).
+Indexing progress can be tracked through the `unindexed_bytes` and `unindexed_rows` fields in the [metadata endpoint](/docs/metadata#responsefield-index).
 
 Note that while data is being indexed, the following will not be updated:
 - [`approx_row_count`](/docs/metadata#responsefield-approx_row_count) and [`approx_logical_bytes`](/docs/metadata#responsefield-approx_logical_bytes) in the metadata endpoint
@@ -601,6 +630,8 @@ The billable resources consumed by the write. The object contains the following 
 The performance metrics for the write. The object currently contains the following fields, but these fields may change name, type, or meaning in the future:
 
 * `server_total_ms` (uint): request time measured on the server, in milliseconds
+* `embedding_tokens` (uint): the number of tokens embedded, only set when using a [native embedding model](/docs/embedding)
+* `embedding_ms` (uint): time spent embedding text, in milliseconds, only set when using a [native embedding model](/docs/embedding)
 
 ## Attributes
 
@@ -664,79 +695,45 @@ curl https://gcp-us-central1.turbopuffer.com/v2/namespaces/write-multivec-exampl
   }
 }'
 ```
-```python
-import turbopuffer
+```cs
+// dotnet add package Turbopuffer
+using System;
+using System.Collections.Generic;
+using Turbopuffer;
+using Turbopuffer.Models.Namespaces;
 
-tpuf = turbopuffer.Turbopuffer(
-    region='gcp-us-central1', # choose best region: https://turbopuffer.com/docs/regions
-)
+using var tpuf = new TurbopufferClient
+{
+    // Pick the right region: https://turbopuffer.com/docs/regions
+    Region = "gcp-us-central1",
+};
 
-ns = tpuf.namespace(f'write-multivec-example-py')
+var ns = tpuf.Namespace("write-multivec-example-csharp");
 
-ns.write(
-    upsert_rows=[
-        {
-            'id': 1,
-            'title_embedding': [0.1, 0.2, 0.3],
-            'image_embedding': [0.4, 0.5],
-            'title': 'hello world',
-        },
-        {
-            'id': 2,
-            'title_embedding': [0.4, 0.5, 0.6],
-            'image_embedding': [0.7, 0.8],
-            'title': 'goodbye world',
-        },
-    ],
-    distance_metric='cosine_distance',
-    schema={
-        'title_embedding': {
-            'type': '[3]f32',
-            'ann': True,
-        },
-        'image_embedding': {
-            'type': '[2]f16',
-            'ann': True,
-        },
-    },
-)
-```
-```typescript
-import { Turbopuffer } from "@turbopuffer/turbopuffer";
-
-const tpuf = new Turbopuffer({
-  region: "gcp-us-central1", // choose best region: https://turbopuffer.com/docs/regions
-});
-
-const ns = tpuf.namespace(`write-multivec-example-ts`);
-
-await ns.write({
-  upsert_rows: [
+await ns.Write(
+    new NamespaceWriteParams
     {
-      id: 1,
-      title_embedding: [0.1, 0.2, 0.3],
-      image_embedding: [0.4, 0.5],
-      title: "hello world",
-    },
-    {
-      id: 2,
-      title_embedding: [0.4, 0.5, 0.6],
-      image_embedding: [0.7, 0.8],
-      title: "goodbye world",
-    },
-  ],
-  distance_metric: "cosine_distance",
-  schema: {
-    title_embedding: {
-      type: "[3]f32",
-      ann: true,
-    },
-    image_embedding: {
-      type: "[2]f16",
-      ann: true,
-    },
-  },
-});
+        UpsertRows =
+        [
+            new Row()
+                .Set("id", 1)
+                .Set("title_embedding", new[] { 0.1f, 0.2f, 0.3f })
+                .Set("image_embedding", new[] { 0.4f, 0.5f })
+                .Set("title", "hello world"),
+            new Row()
+                .Set("id", 2)
+                .Set("title_embedding", new[] { 0.4f, 0.5f, 0.6f })
+                .Set("image_embedding", new[] { 0.7f, 0.8f })
+                .Set("title", "goodbye world"),
+        ],
+        DistanceMetric = DistanceMetric.CosineDistance,
+        Schema = new Dictionary<string, AttributeSchemaConfig>
+        {
+            ["title_embedding"] = new AttributeSchemaConfig { Type = "[3]f32", Ann = true },
+            ["image_embedding"] = new AttributeSchemaConfig { Type = "[2]f16", Ann = true },
+        },
+    }
+);
 ```
 ```go
 package main
@@ -776,15 +773,15 @@ func main() {
 				},
 			},
 			DistanceMetric: turbopuffer.DistanceMetricCosineDistance,
-			Schema: map[string]turbopuffer.AttributeSchemaConfigParam{
-				"title_embedding": {
+			Schema: map[string]turbopuffer.AttributeSchemaParam{
+				"title_embedding": {AttributeSchemaConfig: &turbopuffer.AttributeSchemaConfigParam{
 					Type: "[3]f32",
 					Ann:  param.Override[turbopuffer.AttributeSchemaConfigAnnParam](true),
-				},
-				"image_embedding": {
+				}},
+				"image_embedding": {AttributeSchemaConfig: &turbopuffer.AttributeSchemaConfigParam{
 					Type: "[2]f16",
 					Ann:  param.Override[turbopuffer.AttributeSchemaConfigAnnParam](true),
-				},
+				}},
 			},
 		},
 	)
@@ -846,45 +843,42 @@ public class WriteMultivec {
   }
 }
 ```
-```cs
-// dotnet add package Turbopuffer
-using System;
-using System.Collections.Generic;
-using Turbopuffer;
-using Turbopuffer.Models.Namespaces;
+```python
+import turbopuffer
 
-using var tpuf = new TurbopufferClient
-{
-    // Pick the right region: https://turbopuffer.com/docs/regions
-    Region = "gcp-us-central1",
-};
+tpuf = turbopuffer.Turbopuffer(
+    region='gcp-us-central1', # choose best region: https://turbopuffer.com/docs/regions
+)
 
-var ns = tpuf.Namespace("write-multivec-example-csharp");
+ns = tpuf.namespace(f'write-multivec-example-py')
 
-await ns.Write(
-    new NamespaceWriteParams
-    {
-        UpsertRows =
-        [
-            new Row()
-                .Set("id", 1)
-                .Set("title_embedding", new[] { 0.1f, 0.2f, 0.3f })
-                .Set("image_embedding", new[] { 0.4f, 0.5f })
-                .Set("title", "hello world"),
-            new Row()
-                .Set("id", 2)
-                .Set("title_embedding", new[] { 0.4f, 0.5f, 0.6f })
-                .Set("image_embedding", new[] { 0.7f, 0.8f })
-                .Set("title", "goodbye world"),
-        ],
-        DistanceMetric = DistanceMetric.CosineDistance,
-        Schema = new Dictionary<string, AttributeSchemaConfig>
+ns.write(
+    upsert_rows=[
         {
-            ["title_embedding"] = new AttributeSchemaConfig { Type = "[3]f32", Ann = true },
-            ["image_embedding"] = new AttributeSchemaConfig { Type = "[2]f16", Ann = true },
+            'id': 1,
+            'title_embedding': [0.1, 0.2, 0.3],
+            'image_embedding': [0.4, 0.5],
+            'title': 'hello world',
         },
-    }
-);
+        {
+            'id': 2,
+            'title_embedding': [0.4, 0.5, 0.6],
+            'image_embedding': [0.7, 0.8],
+            'title': 'goodbye world',
+        },
+    ],
+    distance_metric='cosine_distance',
+    schema={
+        'title_embedding': {
+            'type': '[3]f32',
+            'ann': True,
+        },
+        'image_embedding': {
+            'type': '[2]f16',
+            'ann': True,
+        },
+    },
+)
 ```
 ```ruby
 require "turbopuffer"
@@ -922,6 +916,84 @@ ns.write(
     },
   },
 )
+```
+```rust
+use turbopuffer::Client;
+use turbopuffer::types::{AttributeSchemaConfig, DistanceMetric, Row};
+
+#[tokio::main]
+async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    // The API key is read from TURBOPUFFER_API_KEY. Create one here: https://turbopuffer.com/dashboard
+    let client = Client::builder()
+        .region("gcp-us-central1") // choose best region: https://turbopuffer.com/docs/regions
+        .build()?;
+
+    let ns = client.namespace("write-multivec-example-rs");
+
+    ns.write()
+        .upsert_rows([
+            Row::new(1)
+                .insert("title_embedding", [0.1, 0.2, 0.3])
+                .insert("image_embedding", [0.4, 0.5])
+                .insert("title", "hello world"),
+            Row::new(2)
+                .insert("title_embedding", [0.4, 0.5, 0.6])
+                .insert("image_embedding", [0.7, 0.8])
+                .insert("title", "goodbye world"),
+        ])
+        .distance_metric(DistanceMetric::CosineDistance)
+        .schema([
+            (
+                "title_embedding",
+                AttributeSchemaConfig::new("[3]f32").ann(true),
+            ),
+            (
+                "image_embedding",
+                AttributeSchemaConfig::new("[2]f16").ann(true),
+            ),
+        ])
+        .send()
+        .await?;
+
+    Ok(())
+}
+```
+```typescript
+import { Turbopuffer } from "@turbopuffer/turbopuffer";
+
+const tpuf = new Turbopuffer({
+  region: "gcp-us-central1", // choose best region: https://turbopuffer.com/docs/regions
+});
+
+const ns = tpuf.namespace(`write-multivec-example-ts`);
+
+await ns.write({
+  upsert_rows: [
+    {
+      id: 1,
+      title_embedding: [0.1, 0.2, 0.3],
+      image_embedding: [0.4, 0.5],
+      title: "hello world",
+    },
+    {
+      id: 2,
+      title_embedding: [0.4, 0.5, 0.6],
+      image_embedding: [0.7, 0.8],
+      title: "goodbye world",
+    },
+  ],
+  distance_metric: "cosine_distance",
+  schema: {
+    title_embedding: {
+      type: "[3]f32",
+      ann: true,
+    },
+    image_embedding: {
+      type: "[2]f16",
+      ann: true,
+    },
+  },
+});
 ```
 <!-- /multilang -->
 
@@ -1182,75 +1254,43 @@ curl https://gcp-us-central1.turbopuffer.com/v2/namespaces/write-upsert-row-exam
 #   "status": "OK"
 # }
 ```
-```python
-import turbopuffer
+```cs
+// dotnet add package Turbopuffer
+using System;
+using System.Collections.Generic;
+using Turbopuffer;
+using Turbopuffer.Models.Namespaces;
 
-tpuf = turbopuffer.Turbopuffer(
-    region='gcp-us-central1', # choose best region: https://turbopuffer.com/docs/regions
-)
+using var tpuf = new TurbopufferClient
+{
+    // Pick the right region: https://turbopuffer.com/docs/regions
+    Region = "gcp-us-central1",
+};
 
-ns = tpuf.namespace(f'write-upsert-row-example-py')
-# If an error occurs, this call raises a turbopuffer.APIError if a retry was not successful.
-ns.write(
-    upsert_rows=[
-        {
-            'id': 1,
-            'vector': [0.1, 0.1],
-            'my-string': 'one',
-            'my-uint': 12,
-            'my-bool': True,
-            'my-string-array': ['a', 'b']
-        },
-        {
-            'id': 2,
-            'vector': [0.2, 0.2],
-            'my-string-array': ['b', 'd']
-        },
-    ],
-    patch_rows=[
-        {
-            'id': 3,
-            'my-bool': True
-        },
-    ],
-    deletes=[4],
-    distance_metric='cosine_distance'
-)
-```
-```typescript
-import { Turbopuffer } from "@turbopuffer/turbopuffer";
-
-const tpuf = new Turbopuffer({
-  region: "gcp-us-central1", // choose best region: https://turbopuffer.com/docs/regions
-});
-
-const ns = tpuf.namespace(`write-upsert-row-example-ts`);
-
-await ns.write({
-  upsert_rows: [
+var ns = tpuf.Namespace("write-upsert-row-example-csharp");
+// If an error occurs, this call raises a TurbopufferApiException if a retry was not successful.
+await ns.Write(
+    new NamespaceWriteParams
     {
-      id: 1,
-      vector: [0.1, 0.1],
-      "my-string": "one",
-      "my-uint": 12,
-      "my-bool": true,
-      "my-string-array": ["a", "b"],
-    },
-    {
-      id: 2,
-      vector: [0.2, 0.2],
-      "my-string-array": ["b", "d"],
+        UpsertRows =
+        [
+            new Row()
+                .Set("id", 1)
+                .Set("vector", new[] { 0.1f, 0.1f })
+                .Set("my-string", "one")
+                .Set("my-uint", 12)
+                .Set("my-bool", true)
+                .Set("my-string-array", new[] { "a", "b" }),
+            new Row()
+                .Set("id", 2)
+                .Set("vector", new[] { 0.2f, 0.2f })
+                .Set("my-string-array", new[] { "b", "d" }),
+        ],
+        PatchRows = [new Row().Set("id", 3).Set("my-bool", true)],
+        Deletes = [4L],
+        DistanceMetric = DistanceMetric.CosineDistance,
     }
-  ],
-  patch_rows: [
-    {
-      id: 3,
-      "my-bool": true,
-    }
-  ],
-  deletes: [4],
-  distance_metric: "cosine_distance",
-});
+);
 ```
 ```go
 package main
@@ -1352,43 +1392,40 @@ public class WriteUpsertRow {
   }
 }
 ```
-```cs
-// dotnet add package Turbopuffer
-using System;
-using System.Collections.Generic;
-using Turbopuffer;
-using Turbopuffer.Models.Namespaces;
+```python
+import turbopuffer
 
-using var tpuf = new TurbopufferClient
-{
-    // Pick the right region: https://turbopuffer.com/docs/regions
-    Region = "gcp-us-central1",
-};
+tpuf = turbopuffer.Turbopuffer(
+    region='gcp-us-central1', # choose best region: https://turbopuffer.com/docs/regions
+)
 
-var ns = tpuf.Namespace("write-upsert-row-example-csharp");
-// If an error occurs, this call raises a TurbopufferApiException if a retry was not successful.
-await ns.Write(
-    new NamespaceWriteParams
-    {
-        UpsertRows =
-        [
-            new Row()
-                .Set("id", 1)
-                .Set("vector", new[] { 0.1f, 0.1f })
-                .Set("my-string", "one")
-                .Set("my-uint", 12)
-                .Set("my-bool", true)
-                .Set("my-string-array", new[] { "a", "b" }),
-            new Row()
-                .Set("id", 2)
-                .Set("vector", new[] { 0.2f, 0.2f })
-                .Set("my-string-array", new[] { "b", "d" }),
-        ],
-        PatchRows = [new Row().Set("id", 3).Set("my-bool", true)],
-        Deletes = [4L],
-        DistanceMetric = DistanceMetric.CosineDistance,
-    }
-);
+ns = tpuf.namespace(f'write-upsert-row-example-py')
+# If an error occurs, this call raises a turbopuffer.APIError if a retry was not successful.
+ns.write(
+    upsert_rows=[
+        {
+            'id': 1,
+            'vector': [0.1, 0.1],
+            'my-string': 'one',
+            'my-uint': 12,
+            'my-bool': True,
+            'my-string-array': ['a', 'b']
+        },
+        {
+            'id': 2,
+            'vector': [0.2, 0.2],
+            'my-string-array': ['b', 'd']
+        },
+    ],
+    patch_rows=[
+        {
+            'id': 3,
+            'my-bool': True
+        },
+    ],
+    deletes=[4],
+    distance_metric='cosine_distance'
+)
 ```
 ```ruby
 require "turbopuffer"
@@ -1424,6 +1461,75 @@ ns.write(
   deletes: [4],
   distance_metric: "cosine_distance",
 )
+```
+```rust
+use turbopuffer::Client;
+use turbopuffer::types::{DistanceMetric, Row};
+
+#[tokio::main]
+async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    // The API key is read from TURBOPUFFER_API_KEY. Create one here: https://turbopuffer.com/dashboard
+    let client = Client::builder()
+        .region("gcp-us-central1") // choose best region: https://turbopuffer.com/docs/regions
+        .build()?;
+
+    let ns = client.namespace("write-upsert-row-example-rs");
+    // If an error occurs, this call returns a turbopuffer::Error once retries are exhausted.
+    ns.write()
+        .upsert_rows([
+            Row::new(1)
+                .vector([0.1, 0.1])
+                .insert("my-string", "one")
+                .insert("my-uint", 12)
+                .insert("my-bool", true)
+                .insert("my-string-array", ["a", "b"]),
+            Row::new(2)
+                .vector([0.2, 0.2])
+                .insert("my-string-array", ["b", "d"]),
+        ])
+        .patch_rows([Row::new(3).insert("my-bool", true)])
+        .deletes([4])
+        .distance_metric(DistanceMetric::CosineDistance)
+        .send()
+        .await?;
+
+    Ok(())
+}
+```
+```typescript
+import { Turbopuffer } from "@turbopuffer/turbopuffer";
+
+const tpuf = new Turbopuffer({
+  region: "gcp-us-central1", // choose best region: https://turbopuffer.com/docs/regions
+});
+
+const ns = tpuf.namespace(`write-upsert-row-example-ts`);
+
+await ns.write({
+  upsert_rows: [
+    {
+      id: 1,
+      vector: [0.1, 0.1],
+      "my-string": "one",
+      "my-uint": 12,
+      "my-bool": true,
+      "my-string-array": ["a", "b"],
+    },
+    {
+      id: 2,
+      vector: [0.2, 0.2],
+      "my-string-array": ["b", "d"],
+    }
+  ],
+  patch_rows: [
+    {
+      id: 3,
+      "my-bool": true,
+    }
+  ],
+  deletes: [4],
+  distance_metric: "cosine_distance",
+});
 ```
 <!-- /multilang -->
 
@@ -1467,69 +1573,57 @@ curl https://gcp-us-central1.turbopuffer.com/v2/namespaces/write-schema-example-
 #   "status": "OK"
 # }
 ```
-```python
-import turbopuffer
+```cs
+// dotnet add package Turbopuffer
+using System;
+using System.Collections.Generic;
+using Turbopuffer;
+using Turbopuffer.Models.Namespaces;
 
-tpuf = turbopuffer.Turbopuffer(
-    region='gcp-us-central1', # choose best region: https://turbopuffer.com/docs/regions
-)
+using var tpuf = new TurbopufferClient
+{
+    // Pick the right region: https://turbopuffer.com/docs/regions
+    Region = "gcp-us-central1",
+};
 
-ns = tpuf.namespace(f'write-schema-example-py')
+var ns = tpuf.Namespace("write-schema-example-csharp");
 
-ns.write(
-    upsert_rows=[
-        {
-            'id': "769c134d-07b8-4225-954a-b6cc5ffc320c",
-            'vector': [0.1, 0.1],
-            'text': 'the fox is quick and brown',
-            'string': 'fox',
-            'permissions': ['ee1f7c89-a3aa-43c1-8941-c987ee03e7bc', '95cdf8be-98a9-4061-8eeb-2702b6bbcb9e']
-        },
-    ],
-    distance_metric='cosine_distance',
-    schema={
-        'id': 'uuid',
-        'text': {
-            'type': 'string',
-            'full_text_search': True # sets filterable: false, and enables FTS with default settings
-        },
-        'permissions': {
-            'type': '[]uuid', # otherwise inferred as slower/more expensive []string
-        }
-    }
-)
-```
-```typescript
-import { Turbopuffer } from "@turbopuffer/turbopuffer";
-
-const tpuf = new Turbopuffer({
-  region: "gcp-us-central1", // choose best region: https://turbopuffer.com/docs/regions
-});
-
-const ns = tpuf.namespace(`write-schema-example-ts`);
-
-await ns.write({
-  upsert_rows: [
+await ns.Write(
+    new NamespaceWriteParams
     {
-      id: "769c134d-07b8-4225-954a-b6cc5ffc320c",
-      vector: [0.1, 0.1],
-      text: "the fox is quick and brown",
-      string: "fox",
-      permissions: ["ee1f7c89-a3aa-43c1-8941-c987ee03e7bc", "95cdf8be-98a9-4061-8eeb-2702b6bbcb9e"],
-    },
-  ],
-  distance_metric: "cosine_distance",
-  schema: {
-    id: "uuid",
-    text: {
-      type: "string",
-      full_text_search: true, // sets filterable: false, and enables FTS with default settings
-    },
-    permissions: {
-      type: "[]uuid", // otherwise inferred as slower/more expensive []string
-    },
-  },
-});
+        UpsertRows =
+        [
+            new Row()
+                .Set("id", "769c134d-07b8-4225-954a-b6cc5ffc320c")
+                .Set("vector", new[] { 0.1f, 0.1f })
+                .Set("text", "the fox is quick and brown")
+                .Set("string", "fox")
+                .Set(
+                    "permissions",
+                    new[]
+                    {
+                        "ee1f7c89-a3aa-43c1-8941-c987ee03e7bc",
+                        "95cdf8be-98a9-4061-8eeb-2702b6bbcb9e",
+                    }
+                ),
+        ],
+        DistanceMetric = DistanceMetric.CosineDistance,
+        Schema = new Dictionary<string, AttributeSchemaConfig>
+        {
+            ["id"] = new AttributeSchemaConfig { Type = "uuid" },
+            ["text"] = new AttributeSchemaConfig
+            {
+                Type = "string",
+                // Sets filterable(false), and enables FTS with default settings
+                FullTextSearch = true,
+            },
+            ["permissions"] = new AttributeSchemaConfig
+            {
+                Type = "[]uuid", // otherwise inferred as slower/more expensive []string
+            },
+        },
+    }
+);
 ```
 ```go
 package main
@@ -1563,15 +1657,15 @@ func main() {
 				},
 			},
 			DistanceMetric: turbopuffer.DistanceMetricCosineDistance,
-			Schema: map[string]turbopuffer.AttributeSchemaConfigParam{
-				"id": {Type: "uuid"},
-				"text": {
+			Schema: map[string]turbopuffer.AttributeSchemaParam{
+				"id": turbopuffer.AttributeSchemaParamAttributeSchemaConfig("uuid"),
+				"text": {AttributeSchemaConfig: &turbopuffer.AttributeSchemaConfigParam{
 					Type: "string",
 					// sets filterable: false, and enables FTS with default settings
 					FullTextSearch: &turbopuffer.FullTextSearchConfigParam{},
-				},
+				}},
 				// Otherwise inferred as slower/more expensive []string
-				"permissions": {Type: "[]uuid"},
+				"permissions": turbopuffer.AttributeSchemaParamAttributeSchemaConfig("[]uuid"),
 			},
 		},
 	)
@@ -1639,57 +1733,37 @@ public class WriteSchema {
   }
 }
 ```
-```cs
-// dotnet add package Turbopuffer
-using System;
-using System.Collections.Generic;
-using Turbopuffer;
-using Turbopuffer.Models.Namespaces;
+```python
+import turbopuffer
 
-using var tpuf = new TurbopufferClient
-{
-    // Pick the right region: https://turbopuffer.com/docs/regions
-    Region = "gcp-us-central1",
-};
+tpuf = turbopuffer.Turbopuffer(
+    region='gcp-us-central1', # choose best region: https://turbopuffer.com/docs/regions
+)
 
-var ns = tpuf.Namespace("write-schema-example-csharp");
+ns = tpuf.namespace(f'write-schema-example-py')
 
-await ns.Write(
-    new NamespaceWriteParams
-    {
-        UpsertRows =
-        [
-            new Row()
-                .Set("id", "769c134d-07b8-4225-954a-b6cc5ffc320c")
-                .Set("vector", new[] { 0.1f, 0.1f })
-                .Set("text", "the fox is quick and brown")
-                .Set("string", "fox")
-                .Set(
-                    "permissions",
-                    new[]
-                    {
-                        "ee1f7c89-a3aa-43c1-8941-c987ee03e7bc",
-                        "95cdf8be-98a9-4061-8eeb-2702b6bbcb9e",
-                    }
-                ),
-        ],
-        DistanceMetric = DistanceMetric.CosineDistance,
-        Schema = new Dictionary<string, AttributeSchemaConfig>
+ns.write(
+    upsert_rows=[
         {
-            ["id"] = new AttributeSchemaConfig { Type = "uuid" },
-            ["text"] = new AttributeSchemaConfig
-            {
-                Type = "string",
-                // Sets filterable(false), and enables FTS with default settings
-                FullTextSearch = true,
-            },
-            ["permissions"] = new AttributeSchemaConfig
-            {
-                Type = "[]uuid", // otherwise inferred as slower/more expensive []string
-            },
+            'id': "769c134d-07b8-4225-954a-b6cc5ffc320c",
+            'vector': [0.1, 0.1],
+            'text': 'the fox is quick and brown',
+            'string': 'fox',
+            'permissions': ['ee1f7c89-a3aa-43c1-8941-c987ee03e7bc', '95cdf8be-98a9-4061-8eeb-2702b6bbcb9e']
         },
+    ],
+    distance_metric='cosine_distance',
+    schema={
+        'id': 'uuid',
+        'text': {
+            'type': 'string',
+            'full_text_search': True # sets filterable: false, and enables FTS with default settings
+        },
+        'permissions': {
+            'type': '[]uuid', # otherwise inferred as slower/more expensive []string
+        }
     }
-);
+)
 ```
 ```ruby
 require "turbopuffer"
@@ -1722,6 +1796,80 @@ ns.write(
     },
   },
 )
+```
+```rust
+use turbopuffer::Client;
+use turbopuffer::types::{AttributeSchemaConfig, DistanceMetric, Row};
+
+#[tokio::main]
+async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    // The API key is read from TURBOPUFFER_API_KEY. Create one here: https://turbopuffer.com/dashboard
+    let client = Client::builder()
+        .region("gcp-us-central1") // choose best region: https://turbopuffer.com/docs/regions
+        .build()?;
+
+    let ns = client.namespace("write-schema-example-rs");
+
+    ns.write()
+        .upsert_rows([Row::new("769c134d-07b8-4225-954a-b6cc5ffc320c")
+            .vector([0.1, 0.1])
+            .insert("text", "the fox is quick and brown")
+            .insert("string", "fox")
+            .insert(
+                "permissions",
+                [
+                    "ee1f7c89-a3aa-43c1-8941-c987ee03e7bc",
+                    "95cdf8be-98a9-4061-8eeb-2702b6bbcb9e",
+                ],
+            )])
+        .distance_metric(DistanceMetric::CosineDistance)
+        .schema([
+            ("id", AttributeSchemaConfig::new("uuid")),
+            (
+                "text",
+                // Sets filterable: false, and enables FTS with default settings
+                AttributeSchemaConfig::new("string").full_text_search(true),
+            ),
+            // Otherwise inferred as slower/more expensive []string
+            ("permissions", AttributeSchemaConfig::new("[]uuid")),
+        ])
+        .send()
+        .await?;
+
+    Ok(())
+}
+```
+```typescript
+import { Turbopuffer } from "@turbopuffer/turbopuffer";
+
+const tpuf = new Turbopuffer({
+  region: "gcp-us-central1", // choose best region: https://turbopuffer.com/docs/regions
+});
+
+const ns = tpuf.namespace(`write-schema-example-ts`);
+
+await ns.write({
+  upsert_rows: [
+    {
+      id: "769c134d-07b8-4225-954a-b6cc5ffc320c",
+      vector: [0.1, 0.1],
+      text: "the fox is quick and brown",
+      string: "fox",
+      permissions: ["ee1f7c89-a3aa-43c1-8941-c987ee03e7bc", "95cdf8be-98a9-4061-8eeb-2702b6bbcb9e"],
+    },
+  ],
+  distance_metric: "cosine_distance",
+  schema: {
+    id: "uuid",
+    text: {
+      type: "string",
+      full_text_search: true, // sets filterable: false, and enables FTS with default settings
+    },
+    permissions: {
+      type: "[]uuid", // otherwise inferred as slower/more expensive []string
+    },
+  },
+});
 ```
 <!-- /multilang -->
 
@@ -1764,60 +1912,58 @@ curl https://gcp-us-central1.turbopuffer.com/v2/namespaces/write-upsert-columns-
 #   "status": "OK"
 # }
 ```
-```python
-import turbopuffer
+```cs
+// dotnet add package Turbopuffer
+using System;
+using System.Collections.Generic;
+using Turbopuffer;
+using Turbopuffer.Models.Namespaces;
 
-tpuf = turbopuffer.Turbopuffer(
-    region='gcp-us-central1', # choose best region: https://turbopuffer.com/docs/regions
-)
+using var tpuf = new TurbopufferClient
+{
+    // Pick the right region: https://turbopuffer.com/docs/regions
+    Region = "gcp-us-central1",
+};
 
-ns = tpuf.namespace(f'write-upsert-columns-example-py')
-# If an error occurs, this call raises a turbopuffer.APIError if a retry was not successful.
-ns.write(
-    upsert_columns={
-        'id': [1, 2, 3, 4],
-        'vector': [[0.1, 0.1], [0.2, 0.2], [0.3, 0.3], [0.4, 0.4]],
-        'my-string': ['one', None, 'three', 'four'],
-        'my-uint': [12, None, 84, 39],
-        'my-bool': [True, None, False, True],
-        'my-string-array': [['a', 'b'], ['b', 'd'], [], ['c']]
-    },
-    patch_columns={
-        'id': [5, 6],
-        'my-bool': [True, False],
-    },
-    deletes=[7, 8],
-    distance_metric='cosine_distance'
-)
-```
-```typescript
-// $ npm install @turbopuffer/turbopuffer
-import { Turbopuffer } from "@turbopuffer/turbopuffer";
-
-const tpuf = new Turbopuffer({
-  // API tokens are created in the dashboard: https://turbopuffer.com/dashboard
-  apiKey: process.env.TURBOPUFFER_API_KEY,
-  region: "gcp-us-central1", // choose best region: https://turbopuffer.com/docs/regions
-});
-
-const ns = tpuf.namespace(`write-upsert-columns-example-ts`);
-
-await ns.write({
-  upsert_columns: {
-    id: [1, 2, 3, 4],
-    vector: [[0.1, 0.1], [0.2, 0.2], [0.3, 0.3], [0.4, 0.4]],
-    "my-string": ["one", null, "three", "four"],
-    "my-uint": [12, null, 84, 39],
-    "my-bool": [true, null, false, true],
-    "my-string-array": [["a", "b"], ["b", "d"], [], ["c"]],
-  },
-  patch_columns: {
-    id: [5, 6],
-    "my-bool": [true, false],
-  },
-  deletes: [7, 8],
-  distance_metric: "cosine_distance",
-});
+var ns = tpuf.Namespace("write-upsert-columns-example-csharp");
+// If an error occurs, this call raises a TurbopufferApiException if a retry was not successful.
+await ns.Write(
+    new NamespaceWriteParams
+    {
+        UpsertColumns = new Columns()
+            .SetColumn("id", new[] { 1, 2, 3, 4 })
+            .SetColumn(
+                "vector",
+                new[]
+                {
+                    new[] { 0.1f, 0.1f },
+                    new[] { 0.2f, 0.2f },
+                    new[] { 0.3f, 0.3f },
+                    new[] { 0.4f, 0.4f },
+                }
+            )
+            // For columns that contain nulls, use a nullable element type
+            // (null = no value).
+            .SetColumn("my-string", new[] { "one", null, "three", "four" })
+            .SetColumn("my-uint", new uint?[] { 12, null, 84, 39 })
+            .SetColumn("my-bool", new bool?[] { true, null, false, true })
+            .SetColumn(
+                "my-string-array",
+                new string[][]
+                {
+                    new string[] { "a", "b" },
+                    new string[] { "b", "d" },
+                    Array.Empty<string>(),
+                    new string[] { "c" },
+                }
+            ),
+        PatchColumns = new Columns()
+            .SetColumn("id", new[] { 5, 6 })
+            .SetColumn("my-bool", new[] { true, false }),
+        Deletes = [7L, 8L],
+        DistanceMetric = DistanceMetric.CosineDistance,
+    }
+);
 ```
 ```go
 package main
@@ -1916,58 +2062,31 @@ public class WriteUpsertColumns {
   }
 }
 ```
-```cs
-// dotnet add package Turbopuffer
-using System;
-using System.Collections.Generic;
-using Turbopuffer;
-using Turbopuffer.Models.Namespaces;
+```python
+import turbopuffer
 
-using var tpuf = new TurbopufferClient
-{
-    // Pick the right region: https://turbopuffer.com/docs/regions
-    Region = "gcp-us-central1",
-};
+tpuf = turbopuffer.Turbopuffer(
+    region='gcp-us-central1', # choose best region: https://turbopuffer.com/docs/regions
+)
 
-var ns = tpuf.Namespace("write-upsert-columns-example-csharp");
-// If an error occurs, this call raises a TurbopufferApiException if a retry was not successful.
-await ns.Write(
-    new NamespaceWriteParams
-    {
-        UpsertColumns = new Columns()
-            .SetColumn("id", new[] { 1, 2, 3, 4 })
-            .SetColumn(
-                "vector",
-                new[]
-                {
-                    new[] { 0.1f, 0.1f },
-                    new[] { 0.2f, 0.2f },
-                    new[] { 0.3f, 0.3f },
-                    new[] { 0.4f, 0.4f },
-                }
-            )
-            // For columns that contain nulls, use a nullable element type
-            // (null = no value).
-            .SetColumn("my-string", new[] { "one", null, "three", "four" })
-            .SetColumn("my-uint", new uint?[] { 12, null, 84, 39 })
-            .SetColumn("my-bool", new bool?[] { true, null, false, true })
-            .SetColumn(
-                "my-string-array",
-                new string[][]
-                {
-                    new string[] { "a", "b" },
-                    new string[] { "b", "d" },
-                    Array.Empty<string>(),
-                    new string[] { "c" },
-                }
-            ),
-        PatchColumns = new Columns()
-            .SetColumn("id", new[] { 5, 6 })
-            .SetColumn("my-bool", new[] { true, false }),
-        Deletes = [7L, 8L],
-        DistanceMetric = DistanceMetric.CosineDistance,
-    }
-);
+ns = tpuf.namespace(f'write-upsert-columns-example-py')
+# If an error occurs, this call raises a turbopuffer.APIError if a retry was not successful.
+ns.write(
+    upsert_columns={
+        'id': [1, 2, 3, 4],
+        'vector': [[0.1, 0.1], [0.2, 0.2], [0.3, 0.3], [0.4, 0.4]],
+        'my-string': ['one', None, 'three', 'four'],
+        'my-uint': [12, None, 84, 39],
+        'my-bool': [True, None, False, True],
+        'my-string-array': [['a', 'b'], ['b', 'd'], [], ['c']]
+    },
+    patch_columns={
+        'id': [5, 6],
+        'my-bool': [True, False],
+    },
+    deletes=[7, 8],
+    distance_metric='cosine_distance'
+)
 ```
 ```ruby
 require "turbopuffer"
@@ -1994,6 +2113,73 @@ ns.write(
   deletes: [7, 8],
   distance_metric: "cosine_distance",
 )
+```
+```rust
+use turbopuffer::Client;
+use turbopuffer::types::{Columns, DistanceMetric};
+
+#[tokio::main]
+async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    // The API key is read from TURBOPUFFER_API_KEY. Create one here: https://turbopuffer.com/dashboard
+    let client = Client::builder()
+        .region("gcp-us-central1") // choose best region: https://turbopuffer.com/docs/regions
+        .build()?;
+
+    let ns = client.namespace("write-upsert-columns-example-rs");
+    // If an error occurs, this call returns a turbopuffer::Error once retries are exhausted.
+    ns.write()
+        .upsert_columns(
+            Columns::new([1, 2, 3, 4])
+                .vector([[0.1, 0.1], [0.2, 0.2], [0.3, 0.3], [0.4, 0.4]])
+                // None leaves the attribute unset for that document.
+                .insert(
+                    "my-string",
+                    [Some("one"), None, Some("three"), Some("four")],
+                )
+                .insert("my-uint", [Some(12), None, Some(84), Some(39)])
+                .insert("my-bool", [Some(true), None, Some(false), Some(true)])
+                .insert(
+                    "my-string-array",
+                    [vec!["a", "b"], vec!["b", "d"], vec![], vec!["c"]],
+                ),
+        )
+        .patch_columns(Columns::new([5, 6]).insert("my-bool", [true, false]))
+        .deletes([7, 8])
+        .distance_metric(DistanceMetric::CosineDistance)
+        .send()
+        .await?;
+
+    Ok(())
+}
+```
+```typescript
+// $ npm install @turbopuffer/turbopuffer
+import { Turbopuffer } from "@turbopuffer/turbopuffer";
+
+const tpuf = new Turbopuffer({
+  // API tokens are created in the dashboard: https://turbopuffer.com/dashboard
+  apiKey: process.env.TURBOPUFFER_API_KEY,
+  region: "gcp-us-central1", // choose best region: https://turbopuffer.com/docs/regions
+});
+
+const ns = tpuf.namespace(`write-upsert-columns-example-ts`);
+
+await ns.write({
+  upsert_columns: {
+    id: [1, 2, 3, 4],
+    vector: [[0.1, 0.1], [0.2, 0.2], [0.3, 0.3], [0.4, 0.4]],
+    "my-string": ["one", null, "three", "four"],
+    "my-uint": [12, null, 84, 39],
+    "my-bool": [true, null, false, true],
+    "my-string-array": [["a", "b"], ["b", "d"], [], ["c"]],
+  },
+  patch_columns: {
+    id: [5, 6],
+    "my-bool": [true, false],
+  },
+  deletes: [7, 8],
+  distance_metric: "cosine_distance",
+});
 ```
 <!-- /multilang -->
 
@@ -2104,131 +2290,81 @@ curl https://gcp-us-central1.turbopuffer.com/v2/namespaces/write-conditional-exa
 #   "rows_affected": 2
 # }
 ```
-```python
-import turbopuffer
+```cs
+// dotnet add package Turbopuffer
+using System;
+using Turbopuffer;
+using Turbopuffer.Models.Namespaces;
 
-tpuf = turbopuffer.Turbopuffer(
-    region='gcp-us-central1', # choose best region: https://turbopuffer.com/docs/regions
-)
+using var tpuf = new TurbopufferClient
+{
+    // Pick the right region: https://turbopuffer.com/docs/regions
+    Region = "gcp-us-central1",
+};
 
-ns = tpuf.namespace(f'write-conditional-example-py')
+var ns = tpuf.Namespace("write-conditional-example-csharp");
 
-ns.write(
-    upsert_rows=[
-        {
-            'id': 101,
-            'vector': [0.2, 0.8],
-            'title': 'LISP Guide for Beginners (draft_v2)',
-            'version': 2
-        },
-        {
-            'id': 102,
-            'vector': [0.4, 0.4],
-            'title': 'AI for Practitioners (final)',
-            'version': 5
-        }
-    ],
-    distance_metric='cosine_distance'
-)
-
-# Conditionally upsert documents with news title, making sure no version
-# regression occurs.
-result = ns.write(
-    upsert_rows=[
-        {
-            'id': 101,
-            'vector': [0.2, 0.8],
-            'title': 'LISP Guide for Beginners (final)',
-            'version': 3
-        },
-        {
-            'id': 102,
-            'vector': [0.4, 0.4],
-            'title': 'AI for Practitioners (draft_v4)',
-            'version': 4
-        },
-        {
-            'id': 103,
-            'vector': [0.6, 0.8],
-            'title': 'Database Internals (draft_v1)',
-            'version': 1
-        }
-    ],
-    upsert_condition=('version', 'Lt', {'$ref_new': 'version'}),
-    distance_metric='cosine_distance'
-)
-print(result.rows_affected) # 2
-
-results = ns.query(limit=10, include_attributes=True)
-print(results.rows)
-```
-```typescript
-import { Turbopuffer } from "@turbopuffer/turbopuffer";
-
-const tpuf = new Turbopuffer({
-  region: "gcp-us-central1", // choose best region: https://turbopuffer.com/docs/regions
-});
-
-const ns = tpuf.namespace(`write-conditional-example-ts`);
-
-await ns.write({
-  upsert_rows: [
+await ns.Write(
+    new NamespaceWriteParams
     {
-      id: 101,
-      vector: [0.2, 0.8],
-      title: "LISP Guide for Beginners (draft_v2)",
-      version: 2,
-    },
-    {
-      id: 102,
-      vector: [0.4, 0.4],
-      title: "AI for Practitioners (final)",
-      version: 5,
-    },
-  ],
-  distance_metric: "cosine_distance",
-});
+        UpsertRows =
+        [
+            new Row()
+                .Set("id", 101)
+                .Set("vector", new[] { 0.2f, 0.8f })
+                .Set("title", "LISP Guide for Beginners (draft_v2)")
+                .Set("version", 2),
+            new Row()
+                .Set("id", 102)
+                .Set("vector", new[] { 0.4f, 0.4f })
+                .Set("title", "AI for Practitioners (final)")
+                .Set("version", 5),
+        ],
+        DistanceMetric = DistanceMetric.CosineDistance,
+    }
+);
 
 // Conditionally upsert documents with news title, making sure no version
 // regression occurs.
-const writeResult = await ns.write({
-  upsert_rows: [
+var writeResult = await ns.Write(
+    new NamespaceWriteParams
     {
-      id: 101,
-      vector: [0.2, 0.8],
-      title: "LISP Guide for Beginners (final)",
-      version: 3,
-    },
-    {
-      id: 102,
-      vector: [0.4, 0.4],
-      title: "AI for Practitioners (draft_v4)",
-      version: 4,
-    },
-    {
-      id: 103,
-      vector: [0.6, 0.8],
-      title: "Database Internals (draft_v1)",
-      version: 1,
-    },
-  ],
-  upsert_condition: [
-    "version",
-    "Lt",
-    { $ref_new: "version" },
-  ],
-  distance_metric: "cosine_distance",
-});
-console.log(writeResult.rows_affected); // 2
+        UpsertRows =
+        [
+            new Row()
+                .Set("id", 101)
+                .Set("vector", new[] { 0.2f, 0.8f })
+                .Set("title", "LISP Guide for Beginners (final)")
+                .Set("version", 3),
+            new Row()
+                .Set("id", 102)
+                .Set("vector", new[] { 0.4f, 0.4f })
+                .Set("title", "AI for Practitioners (draft_v4)")
+                .Set("version", 4),
+            new Row()
+                .Set("id", 103)
+                .Set("vector", new[] { 0.6f, 0.8f })
+                .Set("title", "Database Internals (draft_v1)")
+                .Set("version", 1),
+        ],
+        UpsertCondition = Filter.Lt("version", Expr.RefNew("version")),
+        DistanceMetric = DistanceMetric.CosineDistance,
+    }
+);
+Console.WriteLine(writeResult.RowsAffected); // 2
 
-const results = await ns.query({
-  rank_by: [
-    "id",
-    "asc",
-  ],
-  limit: 10,
-});
-console.log(results.rows!.length); // 3
+var queryResult = await ns.Query(
+    new NamespaceQueryParams
+    {
+        RankBy = RankBy.Attribute("id", RankByAttributeOrder.ASC),
+        Limit = 10,
+        IncludeAttributes = true,
+    }
+);
+foreach (var row in queryResult.GetRows())
+{
+    Console.WriteLine(row);
+}
 ```
 ```go
 package main
@@ -2401,81 +2537,63 @@ public class WriteConditional {
   }
 }
 ```
-```cs
-// dotnet add package Turbopuffer
-using System;
-using Turbopuffer;
-using Turbopuffer.Models.Namespaces;
+```python
+import turbopuffer
 
-using var tpuf = new TurbopufferClient
-{
-    // Pick the right region: https://turbopuffer.com/docs/regions
-    Region = "gcp-us-central1",
-};
+tpuf = turbopuffer.Turbopuffer(
+    region='gcp-us-central1', # choose best region: https://turbopuffer.com/docs/regions
+)
 
-var ns = tpuf.Namespace("write-conditional-example-csharp");
+ns = tpuf.namespace(f'write-conditional-example-py')
 
-await ns.Write(
-    new NamespaceWriteParams
-    {
-        UpsertRows =
-        [
-            new Row()
-                .Set("id", 101)
-                .Set("vector", new[] { 0.2f, 0.8f })
-                .Set("title", "LISP Guide for Beginners (draft_v2)")
-                .Set("version", 2),
-            new Row()
-                .Set("id", 102)
-                .Set("vector", new[] { 0.4f, 0.4f })
-                .Set("title", "AI for Practitioners (final)")
-                .Set("version", 5),
-        ],
-        DistanceMetric = DistanceMetric.CosineDistance,
-    }
-);
+ns.write(
+    upsert_rows=[
+        {
+            'id': 101,
+            'vector': [0.2, 0.8],
+            'title': 'LISP Guide for Beginners (draft_v2)',
+            'version': 2
+        },
+        {
+            'id': 102,
+            'vector': [0.4, 0.4],
+            'title': 'AI for Practitioners (final)',
+            'version': 5
+        }
+    ],
+    distance_metric='cosine_distance'
+)
 
-// Conditionally upsert documents with news title, making sure no version
-// regression occurs.
-var writeResult = await ns.Write(
-    new NamespaceWriteParams
-    {
-        UpsertRows =
-        [
-            new Row()
-                .Set("id", 101)
-                .Set("vector", new[] { 0.2f, 0.8f })
-                .Set("title", "LISP Guide for Beginners (final)")
-                .Set("version", 3),
-            new Row()
-                .Set("id", 102)
-                .Set("vector", new[] { 0.4f, 0.4f })
-                .Set("title", "AI for Practitioners (draft_v4)")
-                .Set("version", 4),
-            new Row()
-                .Set("id", 103)
-                .Set("vector", new[] { 0.6f, 0.8f })
-                .Set("title", "Database Internals (draft_v1)")
-                .Set("version", 1),
-        ],
-        UpsertCondition = Filter.Lt("version", Expr.RefNew("version")),
-        DistanceMetric = DistanceMetric.CosineDistance,
-    }
-);
-Console.WriteLine(writeResult.RowsAffected); // 2
+# Conditionally upsert documents with news title, making sure no version
+# regression occurs.
+result = ns.write(
+    upsert_rows=[
+        {
+            'id': 101,
+            'vector': [0.2, 0.8],
+            'title': 'LISP Guide for Beginners (final)',
+            'version': 3
+        },
+        {
+            'id': 102,
+            'vector': [0.4, 0.4],
+            'title': 'AI for Practitioners (draft_v4)',
+            'version': 4
+        },
+        {
+            'id': 103,
+            'vector': [0.6, 0.8],
+            'title': 'Database Internals (draft_v1)',
+            'version': 1
+        }
+    ],
+    upsert_condition=('version', 'Lt', {'$ref_new': 'version'}),
+    distance_metric='cosine_distance'
+)
+print(result.rows_affected) # 2
 
-var queryResult = await ns.Query(
-    new NamespaceQueryParams
-    {
-        RankBy = RankBy.Attribute("id", RankByAttributeOrder.ASC),
-        Limit = 10,
-        IncludeAttributes = true,
-    }
-);
-foreach (var row in queryResult.GetRows())
-{
-    Console.WriteLine(row);
-}
+results = ns.query(limit=10, include_attributes=True)
+print(results.rows)
 ```
 ```ruby
 require "turbopuffer"
@@ -2539,6 +2657,139 @@ puts result.rows_affected # 2
 results = ns.query(limit: 10, include_attributes: true)
 puts results.rows
 ```
+```rust
+use turbopuffer::Client;
+use turbopuffer::serde_json;
+use turbopuffer::types::{DistanceMetric, ExprRefNew, Filter, RankBy, RankByAttributeOrder, Row};
+
+#[tokio::main]
+async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    // The API key is read from TURBOPUFFER_API_KEY. Create one here: https://turbopuffer.com/dashboard
+    let client = Client::builder()
+        .region("gcp-us-central1") // choose best region: https://turbopuffer.com/docs/regions
+        .build()?;
+
+    let ns = client.namespace("write-conditional-example-rs");
+
+    ns.write()
+        .upsert_rows([
+            Row::new(101)
+                .vector([0.2, 0.8])
+                .insert("title", "LISP Guide for Beginners (draft_v2)")
+                .insert("version", 2),
+            Row::new(102)
+                .vector([0.4, 0.4])
+                .insert("title", "AI for Practitioners (final)")
+                .insert("version", 5),
+        ])
+        .distance_metric(DistanceMetric::CosineDistance)
+        .send()
+        .await?;
+
+    // Conditionally upsert documents with new titles, making sure no version
+    // regression occurs.
+    let result = ns
+        .write()
+        .upsert_rows([
+            Row::new(101)
+                .vector([0.2, 0.8])
+                .insert("title", "LISP Guide for Beginners (final)")
+                .insert("version", 3),
+            Row::new(102)
+                .vector([0.4, 0.4])
+                .insert("title", "AI for Practitioners (draft_v4)")
+                .insert("version", 4),
+            Row::new(103)
+                .vector([0.6, 0.8])
+                .insert("title", "Database Internals (draft_v1)")
+                .insert("version", 1),
+        ])
+        .upsert_condition(Filter::lt("version", ExprRefNew::new("version")))
+        .distance_metric(DistanceMetric::CosineDistance)
+        .send()
+        .await?;
+    println!("{}", result.rows_affected); // 2
+
+    let results = ns
+        .query()
+        .rank_by(RankBy::attribute("id", RankByAttributeOrder::Asc))
+        .limit(10)
+        .include_attributes(true)
+        .send()
+        .await?;
+    println!("{}", serde_json::to_string_pretty(&results.rows)?);
+
+    Ok(())
+}
+```
+```typescript
+import { Turbopuffer } from "@turbopuffer/turbopuffer";
+
+const tpuf = new Turbopuffer({
+  region: "gcp-us-central1", // choose best region: https://turbopuffer.com/docs/regions
+});
+
+const ns = tpuf.namespace(`write-conditional-example-ts`);
+
+await ns.write({
+  upsert_rows: [
+    {
+      id: 101,
+      vector: [0.2, 0.8],
+      title: "LISP Guide for Beginners (draft_v2)",
+      version: 2,
+    },
+    {
+      id: 102,
+      vector: [0.4, 0.4],
+      title: "AI for Practitioners (final)",
+      version: 5,
+    },
+  ],
+  distance_metric: "cosine_distance",
+});
+
+// Conditionally upsert documents with news title, making sure no version
+// regression occurs.
+const writeResult = await ns.write({
+  upsert_rows: [
+    {
+      id: 101,
+      vector: [0.2, 0.8],
+      title: "LISP Guide for Beginners (final)",
+      version: 3,
+    },
+    {
+      id: 102,
+      vector: [0.4, 0.4],
+      title: "AI for Practitioners (draft_v4)",
+      version: 4,
+    },
+    {
+      id: 103,
+      vector: [0.6, 0.8],
+      title: "Database Internals (draft_v1)",
+      version: 1,
+    },
+  ],
+  upsert_condition: [
+    "version",
+    "Lt",
+    { $ref_new: "version" },
+  ],
+  distance_metric: "cosine_distance",
+});
+console.log(writeResult.rows_affected); // 2
+
+const results = await ns.query({
+  rank_by: [
+    "id",
+    "asc",
+  ],
+  limit: 10,
+});
+console.log(results.rows!.length); // 3
+```
 <!-- /multilang -->
 
 ### Delete by filter
@@ -2593,81 +2844,42 @@ curl https://gcp-us-central1.turbopuffer.com/v2/namespaces/write-delete-by-filte
 #   "rows_affected": 1 // number of rows that were deleted
 # }
 ```
-```python
-import turbopuffer
+```cs
+// dotnet add package Turbopuffer
+using System;
+using System.Collections.Generic;
+using Turbopuffer;
+using Turbopuffer.Models.Namespaces;
 
-tpuf = turbopuffer.Turbopuffer(
-    region="gcp-us-central1", # choose best region: https://turbopuffer.com/docs/regions
-)
+using var tpuf = new TurbopufferClient
+{
+    // Pick the right region: https://turbopuffer.com/docs/regions
+    Region = "gcp-us-central1",
+};
 
-ns = tpuf.namespace(f'write-delete-by-filter-example-py')
-
-ns.write(
-    upsert_rows=[
-        {
-            "id": 101,
-            "vector": [0.2, 0.8],
-            "title": "LISP Guide for Beginners",
-            "views": 10,
-        },
-        {
-            "id": 102,
-            "vector": [0.4, 0.4],
-            "title": "AI for Practitioners",
-            "views": 2500,
-        },
-    ],
-    distance_metric="cosine_distance",
-)
-
-# Delete posts with titles that include the word "guide"
-# and have 1000 or less views
-result = ns.write(
-    delete_by_filter=("And", [("title", "IGlob", "*guide*"), ("views", "Lte", 1000)])
-)
-print(result.rows_affected)  # 1
-
-results = ns.query(rank_by=("id", "asc"), limit=10)
-print(len(results.rows))  # 1
-```
-```typescript
-import { Turbopuffer } from "@turbopuffer/turbopuffer";
-
-const tpuf = new Turbopuffer({
-  region: "gcp-us-central1", // choose best region: https://turbopuffer.com/docs/regions
-});
-
-const ns = tpuf.namespace(`write-delete-by-filter-example-ts`);
-
-await ns.write({
-  upsert_rows: [
-    { id: 101, vector: [0.2, 0.8], title: "LISP Guide for Beginners", views: 10 },
-    { id: 102, vector: [0.4, 0.4], title: "AI for Practitioners", views: 2500 },
-  ],
-  distance_metric: "cosine_distance",
-});
+var ns = tpuf.Namespace("write-delete-by-filter-example-csharp");
 
 // Delete posts with titles that include the word "guide"
 // and have 1000 or less views
-const writeResult = await ns.write({
-  delete_by_filter: [
-    "And",
-    [
-      ["title", "IGlob", "*guide*"],
-      ["views", "Lte", 1000],
-    ],
-  ],
-});
-console.log(writeResult.rows_affected); // 1
+var writeResult = await ns.Write(
+    new NamespaceWriteParams
+    {
+        DeleteByFilter = Filter.And(Filter.IGlob("title", "*guide*"), Filter.Lte("views", 1000)),
+    }
+);
+Console.WriteLine(writeResult.RowsAffected); // 1
 
-const results = await ns.query({
-  rank_by: [
-    "id",
-    "asc",
-  ],
-  limit: 10,
-});
-console.log(results.rows!.length); // 1
+var queryResult = await ns.Query(
+    new NamespaceQueryParams
+    {
+        AggregateBy = new Dictionary<string, AggregateBy>
+        {
+            ["count"] = AggregateBy.Count("id"),
+        },
+    }
+);
+var aggregations = queryResult.GetAggregations();
+Console.WriteLine(aggregations["count"]); // 1
 ```
 ```go
 package main
@@ -2774,42 +2986,42 @@ public class WriteDeleteByFilter {
   }
 }
 ```
-```cs
-// dotnet add package Turbopuffer
-using System;
-using System.Collections.Generic;
-using Turbopuffer;
-using Turbopuffer.Models.Namespaces;
+```python
+import turbopuffer
 
-using var tpuf = new TurbopufferClient
-{
-    // Pick the right region: https://turbopuffer.com/docs/regions
-    Region = "gcp-us-central1",
-};
+tpuf = turbopuffer.Turbopuffer(
+    region="gcp-us-central1", # choose best region: https://turbopuffer.com/docs/regions
+)
 
-var ns = tpuf.Namespace("write-delete-by-filter-example-csharp");
+ns = tpuf.namespace(f'write-delete-by-filter-example-py')
 
-// Delete posts with titles that include the word "guide"
-// and have 1000 or less views
-var writeResult = await ns.Write(
-    new NamespaceWriteParams
-    {
-        DeleteByFilter = Filter.And(Filter.IGlob("title", "*guide*"), Filter.Lte("views", 1000)),
-    }
-);
-Console.WriteLine(writeResult.RowsAffected); // 1
-
-var queryResult = await ns.Query(
-    new NamespaceQueryParams
-    {
-        AggregateBy = new Dictionary<string, AggregateBy>
+ns.write(
+    upsert_rows=[
         {
-            ["count"] = AggregateBy.Count("id"),
+            "id": 101,
+            "vector": [0.2, 0.8],
+            "title": "LISP Guide for Beginners",
+            "views": 10,
         },
-    }
-);
-var aggregations = queryResult.GetAggregations();
-Console.WriteLine(aggregations["count"]); // 1
+        {
+            "id": 102,
+            "vector": [0.4, 0.4],
+            "title": "AI for Practitioners",
+            "views": 2500,
+        },
+    ],
+    distance_metric="cosine_distance",
+)
+
+# Delete posts with titles that include the word "guide"
+# and have 1000 or less views
+result = ns.write(
+    delete_by_filter=("And", [("title", "IGlob", "*guide*"), ("views", "Lte", 1000)])
+)
+print(result.rows_affected)  # 1
+
+results = ns.query(rank_by=("id", "asc"), limit=10)
+print(len(results.rows))  # 1
 ```
 ```ruby
 require "turbopuffer"
@@ -2849,6 +3061,96 @@ results = ns.query(
   limit: 10,
 )
 puts results.rows.length # 1
+```
+```rust
+use turbopuffer::Client;
+use turbopuffer::types::{DistanceMetric, Filter, RankBy, RankByAttributeOrder, Row};
+
+#[tokio::main]
+async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    // The API key is read from TURBOPUFFER_API_KEY. Create one here: https://turbopuffer.com/dashboard
+    let client = Client::builder()
+        .region("gcp-us-central1") // choose best region: https://turbopuffer.com/docs/regions
+        .build()?;
+
+    let ns = client.namespace("write-delete-by-filter-example-rs");
+
+    ns.write()
+        .upsert_rows([
+            Row::new(101)
+                .vector([0.2, 0.8])
+                .insert("title", "LISP Guide for Beginners")
+                .insert("views", 10),
+            Row::new(102)
+                .vector([0.4, 0.4])
+                .insert("title", "AI for Practitioners")
+                .insert("views", 2500),
+        ])
+        .distance_metric(DistanceMetric::CosineDistance)
+        .send()
+        .await?;
+
+    // Delete posts with titles that include the word "guide"
+    // and have 1000 or less views
+    let result = ns
+        .write()
+        .delete_by_filter(Filter::and([
+            Filter::iglob("title", "*guide*"),
+            Filter::lte("views", 1000),
+        ]))
+        .send()
+        .await?;
+    println!("{}", result.rows_affected); // 1
+
+    let results = ns
+        .query()
+        .rank_by(RankBy::attribute("id", RankByAttributeOrder::Asc))
+        .limit(10)
+        .send()
+        .await?;
+    println!("{}", results.rows.len()); // 1
+
+    Ok(())
+}
+```
+```typescript
+import { Turbopuffer } from "@turbopuffer/turbopuffer";
+
+const tpuf = new Turbopuffer({
+  region: "gcp-us-central1", // choose best region: https://turbopuffer.com/docs/regions
+});
+
+const ns = tpuf.namespace(`write-delete-by-filter-example-ts`);
+
+await ns.write({
+  upsert_rows: [
+    { id: 101, vector: [0.2, 0.8], title: "LISP Guide for Beginners", views: 10 },
+    { id: 102, vector: [0.4, 0.4], title: "AI for Practitioners", views: 2500 },
+  ],
+  distance_metric: "cosine_distance",
+});
+
+// Delete posts with titles that include the word "guide"
+// and have 1000 or less views
+const writeResult = await ns.write({
+  delete_by_filter: [
+    "And",
+    [
+      ["title", "IGlob", "*guide*"],
+      ["views", "Lte", 1000],
+    ],
+  ],
+});
+console.log(writeResult.rows_affected); // 1
+
+const results = await ns.query({
+  rank_by: [
+    "id",
+    "asc",
+  ],
+  limit: 10,
+});
+console.log(results.rows!.length); // 1
 ```
 <!-- /multilang -->
 
@@ -2901,99 +3203,46 @@ curl https://gcp-us-central1.turbopuffer.com/v2/namespaces/write-patch-by-filter
 #   "rows_affected": 2 // number of rows that were patched
 # }
 ```
-```python
-import turbopuffer
+```cs
+// dotnet add package Turbopuffer
+using System;
+using System.Collections.Generic;
+using Turbopuffer;
+using Turbopuffer.Models.Namespaces;
 
-tpuf = turbopuffer.Turbopuffer(
-    region="gcp-us-central1", # choose best region: https://turbopuffer.com/docs/regions
-)
+using var tpuf = new TurbopufferClient
+{
+    // Pick the right region: https://turbopuffer.com/docs/regions
+    Region = "gcp-us-central1",
+};
 
-ns = tpuf.namespace(f'write-patch-by-filter-example-py')
-
-ns.write(
-    upsert_rows=[
-        {
-            "id": 101,
-            "vector": [0.2, 0.8],
-            "title": "LISP Guide for Beginners",
-            "views": 10,
-            "status": "published",
-        },
-        {
-            "id": 102,
-            "vector": [0.4, 0.4],
-            "title": "AI for Practitioners",
-            "views": 2500,
-            "status": "published",
-        },
-        {
-            "id": 103,
-            "vector": [0.6, 0.3],
-            "title": "Rust Basics",
-            "views": 50,
-            "status": "published",
-        },
-    ],
-    distance_metric="cosine_distance",
-)
-
-# Archive posts that are published and have 100 or fewer views
-result = ns.write(
-    patch_by_filter={
-        "filters": ("And", [("status", "Eq", "published"), ("views", "Lte", 100)]),
-        "patch": {"status": "archived"},
-    }
-)
-print(result.rows_affected)  # 2
-
-results = ns.query(rank_by=("id", "asc"), include_attributes=["status"], limit=10)
-for row in results.rows:
-    print(f"ID {row['id']}: {row['status']}")  # IDs 101 and 103 are now archived
-```
-```typescript
-import { Turbopuffer } from "@turbopuffer/turbopuffer";
-
-const tpuf = new Turbopuffer({
-  region: "gcp-us-central1", // choose best region: https://turbopuffer.com/docs/regions
-});
-
-const ns = tpuf.namespace(`write-patch-by-filter-example-ts`);
-
-await ns.write({
-  upsert_rows: [
-    { id: 101, vector: [0.2, 0.8], title: "LISP Guide for Beginners", views: 10, status: "published" },
-    { id: 102, vector: [0.4, 0.4], title: "AI for Practitioners", views: 2500, status: "published" },
-    { id: 103, vector: [0.6, 0.3], title: "Rust Basics", views: 50, status: "published" },
-  ],
-  distance_metric: "cosine_distance",
-});
+var ns = tpuf.Namespace("write-patch-by-filter-example-csharp");
 
 // Archive posts that are published and have 100 or fewer views
-const writeResult = await ns.write({
-  patch_by_filter: {
-    filters: [
-      "And",
-      [
-        ["status", "Eq", "published"],
-        ["views", "Lte", 100],
-      ],
-    ],
-    patch: { status: "archived" },
-  },
-});
-console.log(writeResult.rows_affected); // 2
+var writeResult = await ns.Write(
+    new NamespaceWriteParams
+    {
+        PatchByFilter = new PatchByFilter
+        {
+            Filters = Filter.And(Filter.Eq("status", "published"), Filter.Lte("views", 100)),
+            Patch = new Row().Set("status", "archived"),
+        },
+    }
+);
+Console.WriteLine(writeResult.RowsAffected); // 2
 
-const results = await ns.query({
-  rank_by: [
-    "id",
-    "asc",
-  ],
-  limit: 10,
-  include_attributes: ["status"],
-});
-results.rows!.forEach((row) => {
-  console.log(`ID ${row.id}: ${row.status}`); // IDs 101 and 103 are now archived
-});
+var queryResult = await ns.Query(
+    new NamespaceQueryParams
+    {
+        RankBy = RankBy.Attribute("id", RankByAttributeOrder.ASC),
+        Limit = 10,
+        IncludeAttributes = new List<string> { "status" },
+    }
+);
+foreach (var row in queryResult.GetRows())
+{
+    Console.WriteLine($"ID {row.Get<long>("id")}: {row.Get<string>("status")}"); // IDs 101 and 103 are now archived
+}
 ```
 ```go
 package main
@@ -3130,46 +3379,54 @@ public class WritePatchByFilter {
   }
 }
 ```
-```cs
-// dotnet add package Turbopuffer
-using System;
-using System.Collections.Generic;
-using Turbopuffer;
-using Turbopuffer.Models.Namespaces;
+```python
+import turbopuffer
 
-using var tpuf = new TurbopufferClient
-{
-    // Pick the right region: https://turbopuffer.com/docs/regions
-    Region = "gcp-us-central1",
-};
+tpuf = turbopuffer.Turbopuffer(
+    region="gcp-us-central1", # choose best region: https://turbopuffer.com/docs/regions
+)
 
-var ns = tpuf.Namespace("write-patch-by-filter-example-csharp");
+ns = tpuf.namespace(f'write-patch-by-filter-example-py')
 
-// Archive posts that are published and have 100 or fewer views
-var writeResult = await ns.Write(
-    new NamespaceWriteParams
-    {
-        PatchByFilter = new PatchByFilter
+ns.write(
+    upsert_rows=[
         {
-            Filters = Filter.And(Filter.Eq("status", "published"), Filter.Lte("views", 100)),
-            Patch = new Row().Set("status", "archived"),
+            "id": 101,
+            "vector": [0.2, 0.8],
+            "title": "LISP Guide for Beginners",
+            "views": 10,
+            "status": "published",
         },
-    }
-);
-Console.WriteLine(writeResult.RowsAffected); // 2
+        {
+            "id": 102,
+            "vector": [0.4, 0.4],
+            "title": "AI for Practitioners",
+            "views": 2500,
+            "status": "published",
+        },
+        {
+            "id": 103,
+            "vector": [0.6, 0.3],
+            "title": "Rust Basics",
+            "views": 50,
+            "status": "published",
+        },
+    ],
+    distance_metric="cosine_distance",
+)
 
-var queryResult = await ns.Query(
-    new NamespaceQueryParams
-    {
-        RankBy = RankBy.Attribute("id", RankByAttributeOrder.ASC),
-        Limit = 10,
-        IncludeAttributes = new List<string> { "status" },
+# Archive posts that are published and have 100 or fewer views
+result = ns.write(
+    patch_by_filter={
+        "filters": ("And", [("status", "Eq", "published"), ("views", "Lte", 100)]),
+        "patch": {"status": "archived"},
     }
-);
-foreach (var row in queryResult.GetRows())
-{
-    Console.WriteLine($"ID {row.Get<long>("id")}: {row.Get<string>("status")}"); // IDs 101 and 103 are now archived
-}
+)
+print(result.rows_affected)  # 2
+
+results = ns.query(rank_by=("id", "asc"), include_attributes=["status"], limit=10)
+for row in results.rows:
+    print(f"ID {row['id']}: {row['status']}")  # IDs 101 and 103 are now archived
 ```
 ```ruby
 require "turbopuffer"
@@ -3216,6 +3473,122 @@ results.rows.each do |row|
   puts "ID #{row[:id]}: #{row[:status]}" # IDs 101 and 103 are now archived
 end
 ```
+```rust
+// $ cargo add turbopuffer tokio serde --features tokio/full,serde/derive
+use serde::Deserialize;
+use turbopuffer::Client;
+use turbopuffer::types::{
+    DistanceMetric, Filter, PatchByFilter, RankBy, RankByAttributeOrder, Row,
+};
+
+#[derive(Deserialize)]
+struct Post {
+    id: u64,
+    status: String,
+}
+
+#[tokio::main]
+async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    // The API key is read from TURBOPUFFER_API_KEY. Create one here: https://turbopuffer.com/dashboard
+    let client = Client::builder()
+        .region("gcp-us-central1") // choose best region: https://turbopuffer.com/docs/regions
+        .build()?;
+
+    let ns = client.namespace("write-patch-by-filter-example-rs");
+
+    ns.write()
+        .upsert_rows([
+            Row::new(101)
+                .vector([0.2, 0.8])
+                .insert("title", "LISP Guide for Beginners")
+                .insert("views", 10)
+                .insert("status", "published"),
+            Row::new(102)
+                .vector([0.4, 0.4])
+                .insert("title", "AI for Practitioners")
+                .insert("views", 2500)
+                .insert("status", "published"),
+            Row::new(103)
+                .vector([0.6, 0.3])
+                .insert("title", "Rust Basics")
+                .insert("views", 50)
+                .insert("status", "published"),
+        ])
+        .distance_metric(DistanceMetric::CosineDistance)
+        .send()
+        .await?;
+
+    // Archive posts that are published and have 100 or fewer views
+    let result = ns
+        .write()
+        .patch_by_filter(PatchByFilter::new(
+            [("status", "archived")],
+            Filter::and([Filter::eq("status", "published"), Filter::lte("views", 100)]),
+        ))
+        .send()
+        .await?;
+    println!("{}", result.rows_affected); // 2
+
+    let results = ns
+        .query()
+        .rank_by(RankBy::attribute("id", RankByAttributeOrder::Asc))
+        .include_attributes(["status"])
+        .limit(10)
+        .send()
+        .await?;
+    for row in &results.rows {
+        let post: Post = row.deserialize_as()?;
+        println!("ID {}: {}", post.id, post.status); // IDs 101 and 103 are now archived
+    }
+
+    Ok(())
+}
+```
+```typescript
+import { Turbopuffer } from "@turbopuffer/turbopuffer";
+
+const tpuf = new Turbopuffer({
+  region: "gcp-us-central1", // choose best region: https://turbopuffer.com/docs/regions
+});
+
+const ns = tpuf.namespace(`write-patch-by-filter-example-ts`);
+
+await ns.write({
+  upsert_rows: [
+    { id: 101, vector: [0.2, 0.8], title: "LISP Guide for Beginners", views: 10, status: "published" },
+    { id: 102, vector: [0.4, 0.4], title: "AI for Practitioners", views: 2500, status: "published" },
+    { id: 103, vector: [0.6, 0.3], title: "Rust Basics", views: 50, status: "published" },
+  ],
+  distance_metric: "cosine_distance",
+});
+
+// Archive posts that are published and have 100 or fewer views
+const writeResult = await ns.write({
+  patch_by_filter: {
+    filters: [
+      "And",
+      [
+        ["status", "Eq", "published"],
+        ["views", "Lte", 100],
+      ],
+    ],
+    patch: { status: "archived" },
+  },
+});
+console.log(writeResult.rows_affected); // 2
+
+const results = await ns.query({
+  rank_by: [
+    "id",
+    "asc",
+  ],
+  limit: 10,
+  include_attributes: ["status"],
+});
+results.rows!.forEach((row) => {
+  console.log(`ID ${row.id}: ${row.status}`); // IDs 101 and 103 are now archived
+});
+```
 <!-- /multilang -->
 
 ### Copy from a namespace
@@ -3248,35 +3621,28 @@ curl https://gcp-us-central1.turbopuffer.com/v2/namespaces/write-copy-from-dest-
 #   }
 # }
 ```
-```python
-import turbopuffer
+```cs
+// dotnet add package Turbopuffer
+using System;
+using Turbopuffer;
+using Turbopuffer.Models.Namespaces;
 
-tpuf = turbopuffer.Turbopuffer(
-    region='gcp-us-central1', # choose best region: https://turbopuffer.com/docs/regions
-)
+using var tpuf = new TurbopufferClient
+{
+    // Pick the right region: https://turbopuffer.com/docs/regions
+    Region = "gcp-us-central1",
+};
 
-destination = tpuf.namespace(f'write-copy-from-dest-py')
-destination.copy_from(
-    source_namespace=f'write-copy-from-source-py',
-    # To copy across regions, organizations, or cloud providers, also pass:
-    # source_region='aws-us-east-1',
-    # source_api_key='tpuf_A1...',
-)
-```
-```typescript
-import { Turbopuffer } from "@turbopuffer/turbopuffer";
-
-const tpuf = new Turbopuffer({
-  region: "gcp-us-central1", // choose best region: https://turbopuffer.com/docs/regions
-});
-
-const destination = tpuf.namespace(`write-copy-from-dest-ts`);
-await destination.copyFrom({
-  source_namespace: `write-copy-from-source-ts`,
-  // To copy across regions, organizations, or cloud providers, also pass:
-  // source_region: "aws-us-east-1",
-  // source_api_key: "tpuf_A1...",
-});
+var destination = tpuf.Namespace("write-copy-from-dest-csharp");
+await destination.CopyFrom(
+    new NamespaceCopyFromParams
+    {
+        SourceNamespace = "write-copy-from-source-csharp",
+        // To copy across regions, organizations, or cloud providers, also set:
+        // SourceRegion = "aws-us-east-1",
+        // SourceApiKey = "tpuf_A1...",
+    }
+);
 ```
 ```go
 package main
@@ -3333,28 +3699,20 @@ public class WriteCopyFrom {
   }
 }
 ```
-```cs
-// dotnet add package Turbopuffer
-using System;
-using Turbopuffer;
-using Turbopuffer.Models.Namespaces;
+```python
+import turbopuffer
 
-using var tpuf = new TurbopufferClient
-{
-    // Pick the right region: https://turbopuffer.com/docs/regions
-    Region = "gcp-us-central1",
-};
+tpuf = turbopuffer.Turbopuffer(
+    region='gcp-us-central1', # choose best region: https://turbopuffer.com/docs/regions
+)
 
-var destination = tpuf.Namespace("write-copy-from-dest-csharp");
-await destination.CopyFrom(
-    new NamespaceCopyFromParams
-    {
-        SourceNamespace = "write-copy-from-source-csharp",
-        // To copy across regions, organizations, or cloud providers, also set:
-        // SourceRegion = "aws-us-east-1",
-        // SourceApiKey = "tpuf_A1...",
-    }
-);
+destination = tpuf.namespace(f'write-copy-from-dest-py')
+destination.copy_from(
+    source_namespace=f'write-copy-from-source-py',
+    # To copy across regions, organizations, or cloud providers, also pass:
+    # source_region='aws-us-east-1',
+    # source_api_key='tpuf_A1...',
+)
 ```
 ```ruby
 require "turbopuffer"
@@ -3370,6 +3728,43 @@ destination.copy_from(
   # source_region: "aws-us-east-1",
   # source_api_key: "tpuf_A1...",
 )
+```
+```rust
+use turbopuffer::Client;
+
+#[tokio::main]
+async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    // The API key is read from TURBOPUFFER_API_KEY. Create one here: https://turbopuffer.com/dashboard
+    let client = Client::builder()
+        .region("gcp-us-central1") // choose best region: https://turbopuffer.com/docs/regions
+        .build()?;
+
+    let destination = client.namespace("write-copy-from-dest-rs");
+    destination
+        .copy_from("write-copy-from-source-rs")
+        // To copy across regions, organizations, or cloud providers, also set:
+        // .source_region("aws-us-east-1")
+        // .source_api_key("tpuf_A1...")
+        .send()
+        .await?;
+
+    Ok(())
+}
+```
+```typescript
+import { Turbopuffer } from "@turbopuffer/turbopuffer";
+
+const tpuf = new Turbopuffer({
+  region: "gcp-us-central1", // choose best region: https://turbopuffer.com/docs/regions
+});
+
+const destination = tpuf.namespace(`write-copy-from-dest-ts`);
+await destination.copyFrom({
+  source_namespace: `write-copy-from-source-ts`,
+  // To copy across regions, organizations, or cloud providers, also pass:
+  // source_region: "aws-us-east-1",
+  // source_api_key: "tpuf_A1...",
+});
 ```
 <!-- /multilang -->
 
@@ -3429,52 +3824,50 @@ curl https://gcp-us-central1.turbopuffer.com/v1/namespaces/write-copy-progress-d
 #     }
 #   }
 ```
-```python
-import time
-import turbopuffer
+```cs
+// dotnet add package Turbopuffer
+using System;
+using System.Threading.Tasks;
+using Turbopuffer;
+using Turbopuffer.Models.Namespaces;
 
-tpuf = turbopuffer.Turbopuffer(
-    region='gcp-us-central1', # choose best region: https://turbopuffer.com/docs/regions
-)
+using var tpuf = new TurbopufferClient
+{
+    Region = "gcp-us-central1", // choose best region: https://turbopuffer.com/docs/regions
+};
 
-destination = tpuf.namespace(f'write-copy-progress-dest-py')
-copy = destination.start_copy_from(
-    source_namespace=f'write-copy-progress-source-py',
-)
-
-while True:
-    operation = destination.poll_copy_from(copy.token)
-    if operation.status == 'running':
-        if operation.progress:
-            print("progress:", operation.progress)
-    else:
-        print("result:", operation.result)
-        break
-    time.sleep(1)
-```
-```typescript
-import { Turbopuffer } from "@turbopuffer/turbopuffer";
-
-const tpuf = new Turbopuffer({
-  region: "gcp-us-central1", // choose best region: https://turbopuffer.com/docs/regions
-});
-
-const destination = tpuf.namespace(`write-copy-progress-dest-ts`);
-const copy = await destination.startCopyFrom({
-  source_namespace: `write-copy-progress-source-ts`,
-});
-
-while (true) {
-  const operation = await destination.pollCopyFrom(copy.token);
-  if (operation.status === "running") {
-    if (operation.progress) {
-      console.log("progress:", operation.progress);
+var destination = tpuf.Namespace("write-copy-progress-dest-csharp");
+var copy = await destination.StartCopyFrom(
+    new NamespaceStartCopyFromParams
+    {
+        SourceNamespace = "write-copy-progress-source-csharp",
     }
-  } else {
-    console.log("result:", operation.result);
-    break;
-  }
-  await new Promise((resolve) => setTimeout(resolve, 1000));
+);
+
+// Poll until the operation is finished.
+while (true)
+{
+    var operation = await destination.PollCopyFrom(copy.Token);
+    var isFinished = operation.Match(
+        running: running =>
+        {
+            if (running.Progress is not null)
+            {
+                Console.WriteLine($"progress: {running.Progress}");
+            }
+            return false;
+        },
+        finished: finished =>
+        {
+            Console.WriteLine($"result: {finished.Result}");
+            return true;
+        }
+    );
+    if (isFinished)
+    {
+        break;
+    }
+    await Task.Delay(1000);
 }
 ```
 ```go
@@ -3558,51 +3951,28 @@ public class WriteCopyFromProgress {
   }
 }
 ```
-```cs
-// dotnet add package Turbopuffer
-using System;
-using System.Threading.Tasks;
-using Turbopuffer;
-using Turbopuffer.Models.Namespaces;
+```python
+import time
+import turbopuffer
 
-using var tpuf = new TurbopufferClient
-{
-    Region = "gcp-us-central1", // choose best region: https://turbopuffer.com/docs/regions
-};
+tpuf = turbopuffer.Turbopuffer(
+    region='gcp-us-central1', # choose best region: https://turbopuffer.com/docs/regions
+)
 
-var destination = tpuf.Namespace("write-copy-progress-dest-csharp");
-var copy = await destination.StartCopyFrom(
-    new NamespaceStartCopyFromParams
-    {
-        SourceNamespace = "write-copy-progress-source-csharp",
-    }
-);
+destination = tpuf.namespace(f'write-copy-progress-dest-py')
+copy = destination.start_copy_from(
+    source_namespace=f'write-copy-progress-source-py',
+)
 
-// Poll until the operation is finished.
-while (true)
-{
-    var operation = await destination.PollCopyFrom(copy.Token);
-    var isFinished = operation.Match(
-        running: running =>
-        {
-            if (running.Progress is not null)
-            {
-                Console.WriteLine($"progress: {running.Progress}");
-            }
-            return false;
-        },
-        finished: finished =>
-        {
-            Console.WriteLine($"result: {finished.Result}");
-            return true;
-        }
-    );
-    if (isFinished)
-    {
-        break;
-    }
-    await Task.Delay(1000);
-}
+while True:
+    operation = destination.poll_copy_from(copy.token)
+    if operation.status == 'running':
+        if operation.progress:
+            print("progress:", operation.progress)
+    else:
+        print("result:", operation.result)
+        break
+    time.sleep(1)
 ```
 ```ruby
 require "turbopuffer"
@@ -3626,6 +3996,72 @@ loop do
   end
   sleep 1
 end
+```
+```rust
+use std::time::Duration;
+
+use turbopuffer::Client;
+use turbopuffer::serde_json;
+use turbopuffer::types::CopyFromNamespaceOperation;
+
+#[tokio::main]
+async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    // The API key is read from TURBOPUFFER_API_KEY. Create one here: https://turbopuffer.com/dashboard
+    let client = Client::builder()
+        .region("gcp-us-central1") // choose best region: https://turbopuffer.com/docs/regions
+        .build()?;
+
+    let destination = client.namespace("write-copy-progress-dest-rs");
+    let copy = destination
+        .start_copy_from("write-copy-progress-source-rs")
+        .send()
+        .await?;
+
+    // Poll until the operation is finished.
+    loop {
+        match destination.poll_copy_from(&copy.token).send().await? {
+            CopyFromNamespaceOperation::Running(running) => {
+                if let Some(progress) = running.progress {
+                    println!("progress: {progress}");
+                }
+            }
+            CopyFromNamespaceOperation::Finished(finished) => {
+                println!("result: {}", serde_json::to_string(&finished.result)?);
+                break;
+            }
+            // A status unknown to this SDK version, keep polling.
+            _ => {}
+        }
+        tokio::time::sleep(Duration::from_secs(1)).await;
+    }
+
+    Ok(())
+}
+```
+```typescript
+import { Turbopuffer } from "@turbopuffer/turbopuffer";
+
+const tpuf = new Turbopuffer({
+  region: "gcp-us-central1", // choose best region: https://turbopuffer.com/docs/regions
+});
+
+const destination = tpuf.namespace(`write-copy-progress-dest-ts`);
+const copy = await destination.startCopyFrom({
+  source_namespace: `write-copy-progress-source-ts`,
+});
+
+while (true) {
+  const operation = await destination.pollCopyFrom(copy.token);
+  if (operation.status === "running") {
+    if (operation.progress) {
+      console.log("progress:", operation.progress);
+    }
+  } else {
+    console.log("result:", operation.result);
+    break;
+  }
+  await new Promise((resolve) => setTimeout(resolve, 1000));
+}
 ```
 <!-- /multilang -->
 

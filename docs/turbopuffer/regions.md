@@ -6,6 +6,9 @@ GCP and Azure (BYOC). We can spin up dedicated or BYOC clusters in hours upon re
 us](/contact). We will continue to expand public regions with
 demand.
 
+**`gcp-us-central1` is compute-constrained.** Please choose another region for
+new workloads, or [contact us](/contact) if you need to run there.
+
 <!-- multilang -->
 ```bash
 REGION_URL="https://gcp-us-east4.turbopuffer.com" # choose best region: https://turbopuffer.com/docs/regions
@@ -22,23 +25,18 @@ curl --fail-with-body -X POST "$REGION_URL/v2/namespaces/region-example-curl" \
     "distance_metric": "cosine_distance"
   }'
 ```
-```python
-import turbopuffer
+```cs
+// dotnet add package Turbopuffer
+using System;
+using Turbopuffer;
 
-tpuf = turbopuffer.Turbopuffer(
-    region='gcp-us-east4', # choose best region: https://turbopuffer.com/docs/regions
-)
+using var tpuf = new TurbopufferClient
+{
+    // Pick the right region: https://turbopuffer.com/docs/regions
+    Region = "gcp-us-east4",
+};
 
-ns = tpuf.namespace(f'region-example-py')
-```
-```typescript
-import { Turbopuffer } from "@turbopuffer/turbopuffer";
-
-const tpuf = new Turbopuffer({
-  region: "gcp-us-east4", // choose best region: https://turbopuffer.com/docs/regions
-});
-
-const ns = tpuf.namespace(`region-example-ts`);
+var ns = tpuf.Namespace("region-example-csharp");
 ```
 ```go
 package main
@@ -83,18 +81,14 @@ public class Region {
   }
 }
 ```
-```cs
-// dotnet add package Turbopuffer
-using System;
-using Turbopuffer;
+```python
+import turbopuffer
 
-using var tpuf = new TurbopufferClient
-{
-    // Pick the right region: https://turbopuffer.com/docs/regions
-    Region = "gcp-us-east4",
-};
+tpuf = turbopuffer.Turbopuffer(
+    region='gcp-us-east4', # choose best region: https://turbopuffer.com/docs/regions
+)
 
-var ns = tpuf.Namespace("region-example-csharp");
+ns = tpuf.namespace(f'region-example-py')
 ```
 ```ruby
 require "turbopuffer"
@@ -104,6 +98,30 @@ tpuf = Turbopuffer::Client.new(
 )
 
 ns = tpuf.namespace("region-example-rb")
+```
+```rust
+use turbopuffer::Client;
+
+#[tokio::main]
+async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    // The API key is read from TURBOPUFFER_API_KEY. Create one here: https://turbopuffer.com/dashboard
+    let client = Client::builder()
+        .region("gcp-us-east4") // choose best region: https://turbopuffer.com/docs/regions
+        .build()?;
+
+    let ns = client.namespace("region-example-rs");
+
+    Ok(())
+}
+```
+```typescript
+import { Turbopuffer } from "@turbopuffer/turbopuffer";
+
+const tpuf = new Turbopuffer({
+  region: "gcp-us-east4", // choose best region: https://turbopuffer.com/docs/regions
+});
+
+const ns = tpuf.namespace(`region-example-ts`);
 ```
 <!-- /multilang -->
 
@@ -149,6 +167,7 @@ this is unlikely to have a large effect on your bill (1B vectors = 6TB would be
 | aws-us-west-2 | https://aws-us-west-2.turbopuffer.com | Oregon, US |
 | aws-ap-south-1 | https://aws-ap-south-1.turbopuffer.com | Mumbai, India |
 | aws-sa-east-1 | https://aws-sa-east-1.turbopuffer.com | São Paulo, Brazil |
+| aws-ap-southeast-1 | https://aws-ap-southeast-1.turbopuffer.com | Singapore |
 | gcp-us-central1 | https://gcp-us-central1.turbopuffer.com | Iowa, US |
 | gcp-us-east1 | https://gcp-us-east1.turbopuffer.com | South Carolina, US |
 | gcp-us-west1 | https://gcp-us-west1.turbopuffer.com | Oregon, US |

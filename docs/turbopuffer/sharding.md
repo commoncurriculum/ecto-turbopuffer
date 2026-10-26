@@ -106,7 +106,7 @@ write to as an unsharded namespace of the same size.
 
 A query is billed by the size of the namespace it searches, with marginal
 discounts as that size grows (see [pricing](/pricing)). On a sharded namespace,
-a query fans out to every shard and each sub-query bills its shard's size, so
+a query fans out to every shard and each per-shard query bills that shard's size, so
 the total billed size is the same as for an unsharded namespace with the same
 data. The one caveat is the discounts: they are computed from each shard's size
 rather than the whole namespace's, so queries on a sharded namespace earn them

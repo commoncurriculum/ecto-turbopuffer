@@ -43,6 +43,39 @@ associates that store and process PHI.
 
 See our [Vulnerability Disclosure policy](/docs/vdp).
 
+## Tenant isolation
+
+turbopuffer is designed to provide robust data isolation between tenants, even when
+workloads from multiple tenants are colocated on the same turbopuffer cluster
+and share the same physical hardware.
+
+Unlike many other multi-tenant systems, turbopuffer logically separates tenants
+at the storage layer. Every data file is written to a tenant-specific prefix on
+object storage and contains data from only that tenant. No file ever contains
+data from multiple tenants. This separation is maintained in the memory and
+disk caches: each cache entry is identified with a tenant-specific prefix and
+contains data only for that tenant.
+
+When a request arrives:
+
+1. The router layer authenticates the request and resolves the API key to its
+   tenant ID.
+2. The query layer executes within the context of this authenticated tenant ID,
+   and is constrained so that it can only construct file paths within the
+   authenticated tenant's prefix.
+3. The cache and storage layers can therefore only provide data from files
+   belonging to the authenticated tenant ID.
+
+This design enforces the tenant isolation control consistently across a small
+number of tested and well-audited components: request authentication,
+tenant ID propagation, and storage path construction.
+
+Customers who require strict physical isolation of tenant data may consider
+provisioning a dedicated turbopuffer cluster (i.e., separate physical hardware) for
+each tenant. However, this comes with significant cost and operational
+overhead. For most customers, turbopuffer's application-level logical tenant
+isolation provides sufficient data isolation guarantees.
+
 ## Customer managed encryption (CMEK)
 
 turbopuffer offers support for [customer managed encryption
@@ -85,7 +118,7 @@ turbopuffer supports Single Sign-On (SSO) for dashboard access on the Scale and 
 
 ## Privileged access management
 
-turbopuffer only accesses customer data with the customer's written consent. All access is logged, including the accessor, the resources accessed, and the reason. For single-tenant clusters, infrastructure-level controls prevent any turbopuffer employee from accessing customer data or systems without internal approval.
+turbopuffer only accesses customer data with the customer's written consent, except where necessary to respond to an incident that impacts the availability or security of the platform. All access is logged, including the accessor, the resources accessed, and the reason. For single-tenant clusters, infrastructure-level controls prevent any turbopuffer employee from accessing customer data or systems without internal approval.
 
 Privileged access management is available as an add-on that gates access behind multi-party approval, enforces time limits on approved sessions, and exposes the audit log to customers. turbopuffer can customize these policies to meet your security requirements. 
 

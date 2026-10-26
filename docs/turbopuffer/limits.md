@@ -23,11 +23,11 @@ are limited by present performance, [contact us](/contact).
 | Max namespace copy throughput[^limits-note-9] | 72 MB/s |
 | Number of branches[^limits-note-10] | Unlimited (seen: 10M+) |
 | Max upsert batch request size | 512 MB |
-| Max upsert batch of [embedded attributes](/docs/embedding) | 30 rows |
+| Max upsert batch of [embedded attributes](/docs/embedding) | 256 rows |
 | Max rows affected by [patch by filter](/docs/write#patch-by-filter) | 50k[^limits-note-11] |
 | Max rows affected by [delete by filter](/docs/write#delete-by-filter) | 5M[^limits-note-12] |
 | Max ingested, unindexed data[^limits-note-13] | 2 GB |
-| Max queries (global) | Unlimited (seen: 25k+ queries/s)[^limits-note-14] |
+| Max queries (global) | Unlimited (seen: 100k+ queries/s)[^limits-note-14] |
 | Max queries (per namespace)[^limits-note-15] | 5k+ queries/s |
 | Max queries in a [multi-query request](/docs/query#param-queries) | 16 |
 | Max concurrent queries per unpinned namespace[^limits-note-16] | 16 (100s of queries/s) |

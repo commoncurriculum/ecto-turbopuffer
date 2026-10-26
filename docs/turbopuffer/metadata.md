@@ -107,6 +107,14 @@ following fields:
 
   Only present when `status` is `updating`.
 
+- `unindexed_rows` (integer):
+
+  The number of rows in the [write-ahead log](/docs/architecture) that have not
+  yet been indexed. Note that unindexed data is still searched by queries (see
+  [consistency](/docs/query#param-consistency) for details).
+
+  Only present when `status` is `updating`.
+
 ---
 
 **pinning** object
@@ -215,33 +223,27 @@ curl https://gcp-us-central1.turbopuffer.com/v1/namespaces/metadata-curl/metadat
 #   },
 #   "index": {
 #     "status": "updating",
-#     "unindexed_bytes": 128
+#     "unindexed_bytes": 128,
+#     "unindexed_rows": 2
 #   }
 # }
 ```
-```python
-import turbopuffer
+```cs
+// dotnet add package Turbopuffer
+using System;
+using Turbopuffer;
+using Turbopuffer.Models.Namespaces;
 
-tpuf = turbopuffer.Turbopuffer(
-    region="gcp-us-central1", # choose best region: https://turbopuffer.com/docs/regions
-)
+using var tpuf = new TurbopufferClient
+{
+    // Pick the right region: https://turbopuffer.com/docs/regions
+    Region = "gcp-us-central1",
+};
 
-ns = tpuf.namespace(f"metadata-inspect-example-py")
+var ns = tpuf.Namespace("metadata-inspect-example-csharp");
 
-metadata = ns.metadata()
-print(metadata)  # returns a turbopuffer.NamespaceMetadata object
-```
-```typescript
-import { Turbopuffer } from "@turbopuffer/turbopuffer";
-
-const tpuf = new Turbopuffer({
-  region: "gcp-us-central1", // choose best region: https://turbopuffer.com/docs/regions
-});
-
-const ns = tpuf.namespace(`metadata-inspect-example-ts`);
-
-const metadata = await ns.metadata();
-console.log(metadata); // Prints a Turbopuffer.NamespaceMetadata object
+var metadata = await ns.Metadata(new NamespaceMetadataParams());
+Console.WriteLine(metadata); // returns a NamespaceMetadata object
 ```
 ```go
 package main
@@ -292,22 +294,17 @@ public class MetadataInspect {
   }
 }
 ```
-```cs
-// dotnet add package Turbopuffer
-using System;
-using Turbopuffer;
-using Turbopuffer.Models.Namespaces;
+```python
+import turbopuffer
 
-using var tpuf = new TurbopufferClient
-{
-    // Pick the right region: https://turbopuffer.com/docs/regions
-    Region = "gcp-us-central1",
-};
+tpuf = turbopuffer.Turbopuffer(
+    region="gcp-us-central1", # choose best region: https://turbopuffer.com/docs/regions
+)
 
-var ns = tpuf.Namespace("metadata-inspect-example-csharp");
+ns = tpuf.namespace(f"metadata-inspect-example-py")
 
-var metadata = await ns.Metadata(new NamespaceMetadataParams());
-Console.WriteLine(metadata); // returns a NamespaceMetadata object
+metadata = ns.metadata()
+print(metadata)  # returns a turbopuffer.NamespaceMetadata object
 ```
 ```ruby
 require "turbopuffer"
@@ -319,6 +316,37 @@ tpuf = Turbopuffer::Client.new(
 ns = tpuf.namespace("metadata-inspect-example-rb")
 
 puts ns.metadata # outputs a Turbopuffer::NamespaceMetadata object
+```
+```rust
+use turbopuffer::Client;
+use turbopuffer::serde_json;
+
+#[tokio::main]
+async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    // The API key is read from TURBOPUFFER_API_KEY. Create one here: https://turbopuffer.com/dashboard
+    let client = Client::builder()
+        .region("gcp-us-central1") // choose best region: https://turbopuffer.com/docs/regions
+        .build()?;
+
+    let ns = client.namespace("metadata-inspect-example-rs");
+
+    let metadata = ns.metadata().send().await?; // returns a turbopuffer::types::NamespaceMetadata
+    println!("{}", serde_json::to_string_pretty(&metadata)?);
+
+    Ok(())
+}
+```
+```typescript
+import { Turbopuffer } from "@turbopuffer/turbopuffer";
+
+const tpuf = new Turbopuffer({
+  region: "gcp-us-central1", // choose best region: https://turbopuffer.com/docs/regions
+});
+
+const ns = tpuf.namespace(`metadata-inspect-example-ts`);
+
+const metadata = await ns.metadata();
+console.log(metadata); // Prints a Turbopuffer.NamespaceMetadata object
 ```
 <!-- /multilang -->
 

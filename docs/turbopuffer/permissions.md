@@ -94,162 +94,93 @@ curl https://gcp-us-central1.turbopuffer.com/v2/namespaces/permissions-example-c
 #   {"id": 4, "$dist": 0.6209813, "content": "company-wide resources and the latest meeting notes"}
 # ]}
 ```
-```python
-import os
-import turbopuffer
+```cs
+// dotnet add package Turbopuffer
+using System;
+using System.Collections.Generic;
+using Turbopuffer;
+using Turbopuffer.Models.Namespaces;
 
-tpuf = turbopuffer.Turbopuffer(
-    region='gcp-us-central1', # choose best region: https://turbopuffer.com/docs/regions
-    api_key=os.getenv('TURBOPUFFER_API_KEY'),
-)
+using var tpuf = new TurbopufferClient
+{
+    // pick the right region: https://turbopuffer.com/docs/regions
+    Region = "gcp-us-central1",
+};
 
-ns = tpuf.namespace(f'permissions-example-py')
-
-# write a few sample documents that are permissioned by group and user_ids
-
-ns.write(
-    upsert_rows=[
-        {
-            'id': 1,
-            'vector': [1, 1],
-            'content': 'changes in the leadership team',
-            'groups': [],
-            'user_ids' : [123, 453, 125, 189],
-            'is_public': False
-        },
-        {
-            'id': 2,
-            'vector': [2, 1],
-            'content': 'simon & nikhil - 1:1 notes',
-            'groups': [],
-            'user_ids' : [123, 125],
-            'is_public': False
-        },
-        {
-            'id': 3,
-            'vector': [6, 1],
-            'content': 'notes on planned Kubernetes migration',
-            'groups': ['eng'],
-            'user_ids' : [96],
-            'is_public': False
-        },
-        {
-            # this doc has no group/user restrictions and is visible to everyone.
-            # use a boolean attribute so the query can find it with an indexed
-            # lookup instead of filtering on an empty array (e.g. groups Eq [])
-            'id': 4,
-            'vector': [3, 1],
-            'content': 'company-wide resources and the latest meeting notes',
-            'groups': [],
-            'user_ids' : [],
-            'is_public': True
-        }
-    ],
-    schema={
-        'content': {
-            'type': 'string',
-            'full_text_search': True
-        }
-    },
-    distance_metric='cosine_distance'
-)
-
-# now we can query the data passing in the appropriate permissions
-
-result = ns.query(
-    rank_by=('content', 'BM25', 'notes'),
-    filters=('Or', (
-        ('groups', 'Contains', 'design'),
-        ('user_ids', 'Contains', 96),
-        ('is_public', 'Eq', True))),
-    limit=10,
-    include_attributes=['content']
-)
-print(result.rows)
-
-# doc 3 (accessible via user_ids) and doc 4 (public) both match and contain "notes":
-# [Row(id=3, vector=None, $dist=0.9686553, content='notes on planned Kubernetes migration'),
-#  Row(id=4, vector=None, $dist=0.6209813, content='company-wide resources and the latest meeting notes')]
-```
-```typescript
-import { Turbopuffer } from "@turbopuffer/turbopuffer";
-
-const tpuf = new Turbopuffer({
-  apiKey: process.env.TURBOPUFFER_API_KEY,
-  region: "gcp-us-central1", // choose best region: https://turbopuffer.com/docs/regions
-});
-
-const ns = tpuf.namespace(`permissions-example-ts`);
+var ns = tpuf.Namespace("permissions-example-csharp");
 
 // write a few sample documents that are permissioned by group and user_ids
-await ns.write({
-  upsert_rows: [
+await ns.Write(
+    new NamespaceWriteParams
     {
-      id: 1,
-      vector: [1, 1],
-      content: "changes in the leadership team",
-      groups: [],
-      user_ids: [123, 453, 125, 189],
-      is_public: false,
-    },
-    {
-      id: 2,
-      vector: [2, 1],
-      content: "simon & nikhil - 1:1 notes",
-      groups: [],
-      user_ids: [123, 125],
-      is_public: false,
-    },
-    {
-      id: 3,
-      vector: [6, 1],
-      content: "notes on planned Kubernetes migration",
-      groups: ["eng"],
-      user_ids: [96],
-      is_public: false,
-    },
-    {
-      // this doc has no group/user restrictions and is visible to everyone.
-      // use a boolean attribute so the query can find it with an indexed lookup
-      // instead of filtering on an empty array (e.g. groups Eq [])
-      id: 4,
-      vector: [3, 1],
-      content: "company-wide resources and the latest meeting notes",
-      groups: [],
-      user_ids: [],
-      is_public: true,
-    },
-  ],
-  schema: {
-    content: {
-      type: "string",
-      full_text_search: true,
-    },
-  },
-  distance_metric: "cosine_distance",
-});
+        UpsertRows =
+        [
+            new Row()
+                .Set("id", 1)
+                .Set("vector", new[] { 1.0f, 1.0f })
+                .Set("content", "changes in the leadership team")
+                .Set("groups", Array.Empty<string>())
+                .Set("user_ids", new[] { 123, 453, 125, 189 })
+                .Set("is_public", false),
+            new Row()
+                .Set("id", 2)
+                .Set("vector", new[] { 2.0f, 1.0f })
+                .Set("content", "simon & nikhil - 1:1 notes")
+                .Set("groups", Array.Empty<string>())
+                .Set("user_ids", new[] { 123, 125 })
+                .Set("is_public", false),
+            new Row()
+                .Set("id", 3)
+                .Set("vector", new[] { 6.0f, 1.0f })
+                .Set("content", "notes on planned Kubernetes migration")
+                .Set("groups", new[] { "eng" })
+                .Set("user_ids", new[] { 96 })
+                .Set("is_public", false),
+            // this doc has no group/user restrictions and is visible to everyone.
+            // use a boolean attribute so the query can find it with an indexed lookup
+            // instead of filtering on an empty array (e.g. groups Eq [])
+            new Row()
+                .Set("id", 4)
+                .Set("vector", new[] { 3.0f, 1.0f })
+                .Set("content", "company-wide resources and the latest meeting notes")
+                .Set("groups", Array.Empty<string>())
+                .Set("user_ids", Array.Empty<int>())
+                .Set("is_public", true),
+        ],
+        DistanceMetric = DistanceMetric.CosineDistance,
+        Schema = new Dictionary<string, AttributeSchemaConfig>
+        {
+            ["content"] = new AttributeSchemaConfig
+            {
+                Type = "string",
+                FullTextSearch = true,
+            },
+        },
+    }
+);
 
 // now we can query the data passing in the appropriate permissions
-const result = await ns.query({
-  rank_by: ["content", "BM25", "notes"],
-  filters: [
-    "Or",
-    [
-      ["groups", "Contains", "design"],
-      ["user_ids", "Contains", 96],
-      ["is_public", "Eq", true],
-    ],
-  ],
-  limit: 10,
-  include_attributes: ["content"],
-});
+var result = await ns.Query(
+    new NamespaceQueryParams
+    {
+        RankBy = RankByText.BM25("content", "notes"),
+        Filters = Filter.Or(
+            Filter.Contains("groups", "design"),
+            Filter.Contains("user_ids", 96),
+            Filter.Eq("is_public", true)
+        ),
+        Limit = 10,
+        IncludeAttributes = new List<string> { "content" },
+    }
+);
 
-console.log(result.rows);
+foreach (var row in result.GetRows())
+{
+    Console.WriteLine(row);
+}
 // doc 3 (accessible via user_ids) and doc 4 (public) both match and contain "notes":
-// [
-//   { id: 3, dist: 0.9686553, attributes: { content: 'notes on planned Kubernetes migration' } },
-//   { id: 4, dist: 0.6209813, attributes: { content: 'company-wide resources and the latest meeting notes' } }
-// ]
+// {"$dist": 0.9686553, "id": 3, "content": "notes on planned Kubernetes migration"}
+// {"$dist": 0.6209813, "id": 4, "content": "company-wide resources and the latest meeting notes"}
 ```
 ```go
 package main
@@ -308,11 +239,11 @@ func main() {
 				"is_public": true,
 			},
 		},
-		Schema: map[string]turbopuffer.AttributeSchemaConfigParam{
-			"content": {
+		Schema: map[string]turbopuffer.AttributeSchemaParam{
+			"content": {AttributeSchemaConfig: &turbopuffer.AttributeSchemaConfigParam{
 				Type:           turbopuffer.AttributeType("string"),
 				FullTextSearch: &turbopuffer.FullTextSearchConfigParam{},
-			},
+			}},
 		},
 		DistanceMetric: turbopuffer.DistanceMetricCosineDistance,
 	})
@@ -449,93 +380,82 @@ public class Permissions {
   }
 }
 ```
-```cs
-// dotnet add package Turbopuffer
-using System;
-using System.Collections.Generic;
-using Turbopuffer;
-using Turbopuffer.Models.Namespaces;
+```python
+import os
+import turbopuffer
 
-using var tpuf = new TurbopufferClient
-{
-    // pick the right region: https://turbopuffer.com/docs/regions
-    Region = "gcp-us-central1",
-};
+tpuf = turbopuffer.Turbopuffer(
+    region='gcp-us-central1', # choose best region: https://turbopuffer.com/docs/regions
+    api_key=os.getenv('TURBOPUFFER_API_KEY'),
+)
 
-var ns = tpuf.Namespace("permissions-example-csharp");
+ns = tpuf.namespace(f'permissions-example-py')
 
-// write a few sample documents that are permissioned by group and user_ids
-await ns.Write(
-    new NamespaceWriteParams
-    {
-        UpsertRows =
-        [
-            new Row()
-                .Set("id", 1)
-                .Set("vector", new[] { 1.0f, 1.0f })
-                .Set("content", "changes in the leadership team")
-                .Set("groups", Array.Empty<string>())
-                .Set("user_ids", new[] { 123, 453, 125, 189 })
-                .Set("is_public", false),
-            new Row()
-                .Set("id", 2)
-                .Set("vector", new[] { 2.0f, 1.0f })
-                .Set("content", "simon & nikhil - 1:1 notes")
-                .Set("groups", Array.Empty<string>())
-                .Set("user_ids", new[] { 123, 125 })
-                .Set("is_public", false),
-            new Row()
-                .Set("id", 3)
-                .Set("vector", new[] { 6.0f, 1.0f })
-                .Set("content", "notes on planned Kubernetes migration")
-                .Set("groups", new[] { "eng" })
-                .Set("user_ids", new[] { 96 })
-                .Set("is_public", false),
-            // this doc has no group/user restrictions and is visible to everyone.
-            // use a boolean attribute so the query can find it with an indexed lookup
-            // instead of filtering on an empty array (e.g. groups Eq [])
-            new Row()
-                .Set("id", 4)
-                .Set("vector", new[] { 3.0f, 1.0f })
-                .Set("content", "company-wide resources and the latest meeting notes")
-                .Set("groups", Array.Empty<string>())
-                .Set("user_ids", Array.Empty<int>())
-                .Set("is_public", true),
-        ],
-        DistanceMetric = DistanceMetric.CosineDistance,
-        Schema = new Dictionary<string, AttributeSchemaConfig>
+# write a few sample documents that are permissioned by group and user_ids
+
+ns.write(
+    upsert_rows=[
         {
-            ["content"] = new AttributeSchemaConfig
-            {
-                Type = "string",
-                FullTextSearch = true,
-            },
+            'id': 1,
+            'vector': [1, 1],
+            'content': 'changes in the leadership team',
+            'groups': [],
+            'user_ids' : [123, 453, 125, 189],
+            'is_public': False
         },
-    }
-);
+        {
+            'id': 2,
+            'vector': [2, 1],
+            'content': 'simon & nikhil - 1:1 notes',
+            'groups': [],
+            'user_ids' : [123, 125],
+            'is_public': False
+        },
+        {
+            'id': 3,
+            'vector': [6, 1],
+            'content': 'notes on planned Kubernetes migration',
+            'groups': ['eng'],
+            'user_ids' : [96],
+            'is_public': False
+        },
+        {
+            # this doc has no group/user restrictions and is visible to everyone.
+            # use a boolean attribute so the query can find it with an indexed
+            # lookup instead of filtering on an empty array (e.g. groups Eq [])
+            'id': 4,
+            'vector': [3, 1],
+            'content': 'company-wide resources and the latest meeting notes',
+            'groups': [],
+            'user_ids' : [],
+            'is_public': True
+        }
+    ],
+    schema={
+        'content': {
+            'type': 'string',
+            'full_text_search': True
+        }
+    },
+    distance_metric='cosine_distance'
+)
 
-// now we can query the data passing in the appropriate permissions
-var result = await ns.Query(
-    new NamespaceQueryParams
-    {
-        RankBy = RankByText.BM25("content", "notes"),
-        Filters = Filter.Or(
-            Filter.Contains("groups", "design"),
-            Filter.Contains("user_ids", 96),
-            Filter.Eq("is_public", true)
-        ),
-        Limit = 10,
-        IncludeAttributes = new List<string> { "content" },
-    }
-);
+# now we can query the data passing in the appropriate permissions
 
-foreach (var row in result.GetRows())
-{
-    Console.WriteLine(row);
-}
-// doc 3 (accessible via user_ids) and doc 4 (public) both match and contain "notes":
-// {"$dist": 0.9686553, "id": 3, "content": "notes on planned Kubernetes migration"}
-// {"$dist": 0.6209813, "id": 4, "content": "company-wide resources and the latest meeting notes"}
+result = ns.query(
+    rank_by=('content', 'BM25', 'notes'),
+    filters=('Or', (
+        ('groups', 'Contains', 'design'),
+        ('user_ids', 'Contains', 96),
+        ('is_public', 'Eq', True))),
+    limit=10,
+    include_attributes=['content']
+)
+print(result.rows)
+
+# doc 3 (accessible via user_ids) and doc 4 (public) both match and contain "notes":
+# [Row(id=3, vector=None, $dist=0.9686553, content='notes on planned Kubernetes migration'),
+#  Row(id=4, vector=None, $dist=0.6209813, content='company-wide resources and the latest meeting notes')]
 ```
 ```ruby
 require "turbopuffer"
@@ -608,6 +528,166 @@ puts result.rows
 # doc 3 (accessible via user_ids) and doc 4 (public) both match and contain "notes":
 # [{id: 3, $dist: 0.9686553, content: "notes on planned Kubernetes migration"},
 #  {id: 4, $dist: 0.6209813, content: "company-wide resources and the latest meeting notes"}]
+```
+```rust
+use turbopuffer::Client;
+use turbopuffer::serde_json;
+use turbopuffer::types::{AttributeSchemaConfig, DistanceMetric, Filter, RankBy, Row};
+
+#[tokio::main]
+async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    // The API key is read from TURBOPUFFER_API_KEY. Create one here: https://turbopuffer.com/dashboard
+    let client = Client::builder()
+        .region("gcp-us-central1") // choose best region: https://turbopuffer.com/docs/regions
+        .build()?;
+
+    let ns = client.namespace("permissions-example-rs");
+
+    // write a few sample documents that are permissioned by group and user_ids
+    ns.write()
+        .upsert_rows([
+            Row::new(1)
+                .vector([1.0, 1.0])
+                .insert("content", "changes in the leadership team")
+                .insert("groups", Vec::<String>::new())
+                .insert("user_ids", [123, 453, 125, 189])
+                .insert("is_public", false),
+            Row::new(2)
+                .vector([2.0, 1.0])
+                .insert("content", "simon & nikhil - 1:1 notes")
+                .insert("groups", Vec::<String>::new())
+                .insert("user_ids", [123, 125])
+                .insert("is_public", false),
+            Row::new(3)
+                .vector([6.0, 1.0])
+                .insert("content", "notes on planned Kubernetes migration")
+                .insert("groups", ["eng"])
+                .insert("user_ids", [96])
+                .insert("is_public", false),
+            // this doc has no group/user restrictions and is visible to everyone.
+            // use a boolean attribute so the query can find it with an indexed
+            // lookup instead of filtering on an empty array (e.g. groups Eq [])
+            Row::new(4)
+                .vector([3.0, 1.0])
+                .insert(
+                    "content",
+                    "company-wide resources and the latest meeting notes",
+                )
+                .insert("groups", Vec::<String>::new())
+                .insert("user_ids", Vec::<u64>::new())
+                .insert("is_public", true),
+        ])
+        .schema([(
+            "content",
+            AttributeSchemaConfig::new("string").full_text_search(true),
+        )])
+        .distance_metric(DistanceMetric::CosineDistance)
+        .send()
+        .await?;
+
+    // now we can query the data passing in the appropriate permissions
+    let result = ns
+        .query()
+        .rank_by(RankBy::bm25("content", "notes"))
+        .filters(Filter::or([
+            Filter::contains("groups", "design"),
+            Filter::contains("user_ids", 96),
+            Filter::eq("is_public", true),
+        ]))
+        .limit(10)
+        .include_attributes(["content"])
+        .send()
+        .await?;
+    println!("{}", serde_json::to_string_pretty(&result.rows)?);
+
+    // doc 3 (accessible via user_ids) and doc 4 (public) both match and contain "notes":
+    // [
+    //   {"id": 3, "$dist": 0.9686553, "content": "notes on planned Kubernetes migration"},
+    //   {"id": 4, "$dist": 0.6209813, "content": "company-wide resources and the latest meeting notes"}
+    // ]
+
+    Ok(())
+}
+```
+```typescript
+import { Turbopuffer } from "@turbopuffer/turbopuffer";
+
+const tpuf = new Turbopuffer({
+  apiKey: process.env.TURBOPUFFER_API_KEY,
+  region: "gcp-us-central1", // choose best region: https://turbopuffer.com/docs/regions
+});
+
+const ns = tpuf.namespace(`permissions-example-ts`);
+
+// write a few sample documents that are permissioned by group and user_ids
+await ns.write({
+  upsert_rows: [
+    {
+      id: 1,
+      vector: [1, 1],
+      content: "changes in the leadership team",
+      groups: [],
+      user_ids: [123, 453, 125, 189],
+      is_public: false,
+    },
+    {
+      id: 2,
+      vector: [2, 1],
+      content: "simon & nikhil - 1:1 notes",
+      groups: [],
+      user_ids: [123, 125],
+      is_public: false,
+    },
+    {
+      id: 3,
+      vector: [6, 1],
+      content: "notes on planned Kubernetes migration",
+      groups: ["eng"],
+      user_ids: [96],
+      is_public: false,
+    },
+    {
+      // this doc has no group/user restrictions and is visible to everyone.
+      // use a boolean attribute so the query can find it with an indexed lookup
+      // instead of filtering on an empty array (e.g. groups Eq [])
+      id: 4,
+      vector: [3, 1],
+      content: "company-wide resources and the latest meeting notes",
+      groups: [],
+      user_ids: [],
+      is_public: true,
+    },
+  ],
+  schema: {
+    content: {
+      type: "string",
+      full_text_search: true,
+    },
+  },
+  distance_metric: "cosine_distance",
+});
+
+// now we can query the data passing in the appropriate permissions
+const result = await ns.query({
+  rank_by: ["content", "BM25", "notes"],
+  filters: [
+    "Or",
+    [
+      ["groups", "Contains", "design"],
+      ["user_ids", "Contains", 96],
+      ["is_public", "Eq", true],
+    ],
+  ],
+  limit: 10,
+  include_attributes: ["content"],
+});
+
+console.log(result.rows);
+// doc 3 (accessible via user_ids) and doc 4 (public) both match and contain "notes":
+// [
+//   { id: 3, dist: 0.9686553, attributes: { content: 'notes on planned Kubernetes migration' } },
+//   { id: 4, dist: 0.6209813, attributes: { content: 'company-wide resources and the latest meeting notes' } }
+// ]
 ```
 <!-- /multilang -->
 

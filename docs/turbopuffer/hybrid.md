@@ -36,13 +36,19 @@ produces semantically relevant search results (vectors), as well as results
 matching specific words or strings (i.e. product SKUs, email addresses, weighing
 exact keywords highly).
 
-Keep search logic in `{search.py, search.ts}`. Use turbopuffer for initial
+Keep search logic in `{search.py, search.ts}`. Use turbopuffer for first-stage
 retrieval to narrow millions of results to dozens for rank fusion and
-re-ranking. turbopuffer also provides simple server-side rank fusion via RRF.
+reranking. turbopuffer also provides server-side rank fusion via RRF and
+[native reranking](/docs/reranking) with managed models.
+
+With native reranking, set `rerank_by` on the multi-query to score and reorder
+the combined candidates. See [hybrid search with native
+embeddings](/docs/reranking#hybrid-search-with-native-embeddings) for an example.
 
 To improve search results further, we suggest:
 
-- Using a re-ranker (such as [Cohere](https://cohere.com/rerank),
+- Using [native reranking](/docs/reranking), or a reranker in your own code
+  (such as [Cohere](https://cohere.com/rerank),
   [ZeroEntropy](https://docs.zeroentropy.dev/models#rerankers),
   [MixedBread](https://www.mixedbread.com/docs/stores/search/rerank), or
   [Voyage](https://docs.voyageai.com/docs/reranker))
@@ -61,8 +67,9 @@ To improve search results further, we suggest:
   [Voyage image model](https://docs.voyageai.com/docs/multimodal-embeddings))
 
 The example below uses [native embeddings](/docs/embedding) for the vector
-side, so one `content` attribute drives both BM25 and vector search. To embed
-in your own code instead, choose an
+side, so one `content` attribute drives both BM25 and vector search. It then
+reorders the combined results with [native reranking](/docs/reranking). To
+embed in your own code instead, choose an
 embedding provider from the dropdown in the code sample.
 
 ```python
@@ -73,7 +80,6 @@ from typing import List
 
 import turbopuffer
 from sentence_transformers import SentenceTransformer
-from turbopuffer.types import Row
 
 tpuf = turbopuffer.Turbopuffer(
     api_key=os.getenv("TURBOPUFFER_API_KEY"), # created here: https://turbopuffer.com/dashboard
@@ -165,21 +171,28 @@ response = ns.multi_query(
 fused_results = response.results[0].rows
 print("Fused:", [item.id for item in fused_results])
 
-def cohere_rerank_or_unranked(results, query, k = None):
-    if not os.getenv("COHERE_API_KEY"):
-        print("Warning: COHERE_API_KEY not set (https://dashboard.cohere.com/api-keys), returning unranked results")
-        return results
-    try:
-        co = __import__('cohere').Client(os.getenv("COHERE_API_KEY"))
-        reranked = co.rerank(query=query, documents=[r.content for r in results], top_n=k or len(results)).results
-        for r in reranked:
-            results[r.index]['$dist'] = r.relevance_score
-        return [results[r.index] for r in reranked]
-    except (ImportError, AttributeError):
-        print("Warning: cohere package not installed (`pip install cohere`), returning unranked results")
-        return results
+# Rerank the combined candidates with a model: https://turbopuffer.com/docs/reranking
+response = ns.multi_query(
+    queries=[
+        {
+            "rank_by": ("vector", "ANN", query_vec),
+            "limit": 10,
+            "include_attributes": ["content"],
+        },
+        {
+            "rank_by": ("content", "BM25", query),
+            "limit": 10,
+            "include_attributes": ["content"],
+        },
+    ],
+    rerank_by={
+        "model": "zeroentropy/zerank-2",
+        "attribute": "content",
+        "query": query,
+    },
+)
 
-reranked_results = cohere_rerank_or_unranked(fused_results, query)
+reranked_results = response.results[0].rows
 print("Reranked:", [item.id for item in reranked_results])
 ```
 
@@ -188,8 +201,8 @@ print("Reranked:", [item.id for item in reranked_results])
 [Computed attributes](/docs/query#param-compute_attributes) can add signal to each search result, without additional turbopuffer roundtrips.
 For example, you could compute the `BM25` score of a query to a `content`
 attribute, even when your [ranking expression](/docs/query#param-rank_by) only calculates vector distance between the query and `content`. When doing a [multi-query](/docs/query#multi-queries), consider
-having each sub-query compute the other strategy's score, and pass both these scores into
-your second stage re-ranker:
+having each subquery compute the other strategy's score, and pass both these scores into
+a second-stage reranker in your own code:
 
 ```jsonc
 [

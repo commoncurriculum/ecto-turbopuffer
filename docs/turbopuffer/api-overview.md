@@ -98,29 +98,25 @@ curl https://gcp-us-central1.turbopuffer.com/v1/namespaces/asyncreq-dst-curl/ope
 #     }
 #   }
 ```
-```python
-import turbopuffer
+```cs
+// dotnet add package Turbopuffer
+using System;
+using Turbopuffer;
+using Turbopuffer.Models.Namespaces;
 
-tpuf = turbopuffer.Turbopuffer(region='gcp-us-central1')
-ns = tpuf.namespace(f'asyncreq-dst-py')
+using var tpuf = new TurbopufferClient{ Region = "gcp-us-central1" };
 
-# Allow up to 30 minutes for the call to complete.
-ns.copy_from(
-    source_namespace=f'asyncreq-src-py',
-    timeout=30 * 60,
-)
-```
-```typescript
-import { Turbopuffer } from "@turbopuffer/turbopuffer";
-
-const tpuf = new Turbopuffer({region: "gcp-us-central1"});
-const ns = tpuf.namespace(`asyncreq-dst-ts`);
+var ns = tpuf.Namespace("asyncreq-dst-csharp");
 
 // Allow up to 30 minutes for the call to complete.
-await ns.copyFrom(
-    { source_namespace: `asyncreq-src-ts` },
-    { timeout: 30 * 60 * 1000 },
-);
+await ns
+    .WithOptions(options => options with { Timeout = TimeSpan.FromMinutes(30) })
+    .CopyFrom(
+        new NamespaceCopyFromParams
+        {
+            SourceNamespace = "asyncreq-src-csharp",
+        }
+    );
 ```
 ```go
 package main
@@ -178,25 +174,17 @@ public class AsyncRequest {
   }
 }
 ```
-```cs
-// dotnet add package Turbopuffer
-using System;
-using Turbopuffer;
-using Turbopuffer.Models.Namespaces;
+```python
+import turbopuffer
 
-using var tpuf = new TurbopufferClient{ Region = "gcp-us-central1" };
+tpuf = turbopuffer.Turbopuffer(region='gcp-us-central1')
+ns = tpuf.namespace(f'asyncreq-dst-py')
 
-var ns = tpuf.Namespace("asyncreq-dst-csharp");
-
-// Allow up to 30 minutes for the call to complete.
-await ns
-    .WithOptions(options => options with { Timeout = TimeSpan.FromMinutes(30) })
-    .CopyFrom(
-        new NamespaceCopyFromParams
-        {
-            SourceNamespace = "asyncreq-src-csharp",
-        }
-    );
+# Allow up to 30 minutes for the call to complete.
+ns.copy_from(
+    source_namespace=f'asyncreq-src-py',
+    timeout=30 * 60,
+)
 ```
 ```ruby
 require "turbopuffer"
@@ -209,6 +197,41 @@ ns.copy_from(
   source_namespace: "asyncreq-src-rb",
   request_options: { timeout: 30 * 60 },
 )
+```
+```rust
+use std::time::Duration;
+
+use turbopuffer::Client;
+
+#[tokio::main]
+async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    // The API key is read from TURBOPUFFER_API_KEY. Create one here: https://turbopuffer.com/dashboard
+    let client = Client::builder()
+        .region("gcp-us-central1") // choose best region: https://turbopuffer.com/docs/regions
+        .build()?;
+
+    let ns = client.namespace("asyncreq-dst-rs");
+
+    // Allow up to 30 minutes for the call to complete.
+    ns.copy_from("asyncreq-src-rs")
+        .timeout(Duration::from_secs(30 * 60))
+        .send()
+        .await?;
+
+    Ok(())
+}
+```
+```typescript
+import { Turbopuffer } from "@turbopuffer/turbopuffer";
+
+const tpuf = new Turbopuffer({region: "gcp-us-central1"});
+const ns = tpuf.namespace(`asyncreq-dst-ts`);
+
+// Allow up to 30 minutes for the call to complete.
+await ns.copyFrom(
+    { source_namespace: `asyncreq-src-ts` },
+    { timeout: 30 * 60 * 1000 },
+);
 ```
 <!-- /multilang -->
 

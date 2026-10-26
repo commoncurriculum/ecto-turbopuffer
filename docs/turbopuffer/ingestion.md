@@ -61,43 +61,31 @@ curl https://gcp-us-central1.turbopuffer.com/v2/namespaces/disable-backpressure-
    "consistency": {"level": "eventual"}
  }'
 ```
-```python
-ns = tpuf.namespace(f'disable-backpressure-example-py')
-
-# Write with backpressure disabled
-ns.write(
-    upsert_rows=[
-        {'id': 1, 'vector': [0.1, 0.1]},
-    ],
-    distance_metric='cosine_distance',
-    disable_backpressure=True,
-)
-
-# Query with eventual consistency
-ns.query(
-    rank_by=('vector', 'ANN', [0.1, 0.1]),
-    limit=10,
-    consistency={'level': 'eventual'},
-)
-```
-```typescript
-const ns = tpuf.namespace(`disable-backpressure-example-ts`);
+```cs
+var ns = tpuf.Namespace("disable-backpressure-example-csharp");
 
 // Write with backpressure disabled
-await ns.write({
-  upsert_rows: [
-    { id: 1, vector: [0.1, 0.1] },
-  ],
-  distance_metric: "cosine_distance",
-  disable_backpressure: true,
-});
+await ns.Write(
+    new NamespaceWriteParams
+    {
+        UpsertRows = [new Row().Set("id", 1).Set("vector", new[] { 0.1f, 0.1f })],
+        DistanceMetric = DistanceMetric.CosineDistance,
+        DisableBackpressure = true,
+    }
+);
 
 // Query with eventual consistency
-await ns.query({
-  rank_by: ["vector", "ANN", [0.1, 0.1]],
-  limit: 10,
-  consistency: { level: "eventual" },
-});
+await ns.Query(
+    new NamespaceQueryParams
+    {
+        RankBy = RankBy.Ann("vector", new[] { 0.1f, 0.1f }),
+        Limit = 10,
+        Consistency = new NamespaceQueryParamsConsistency
+        {
+            Level = NamespaceQueryParamsConsistencyLevel.Eventual,
+        },
+    }
+);
 ```
 ```go
 	ns := tpuf.Namespace("disable-backpressure-example-go")
@@ -163,31 +151,24 @@ await ns.query({
   }
 }
 ```
-```cs
-var ns = tpuf.Namespace("disable-backpressure-example-csharp");
+```python
+ns = tpuf.namespace(f'disable-backpressure-example-py')
 
-// Write with backpressure disabled
-await ns.Write(
-    new NamespaceWriteParams
-    {
-        UpsertRows = [new Row().Set("id", 1).Set("vector", new[] { 0.1f, 0.1f })],
-        DistanceMetric = DistanceMetric.CosineDistance,
-        DisableBackpressure = true,
-    }
-);
+# Write with backpressure disabled
+ns.write(
+    upsert_rows=[
+        {'id': 1, 'vector': [0.1, 0.1]},
+    ],
+    distance_metric='cosine_distance',
+    disable_backpressure=True,
+)
 
-// Query with eventual consistency
-await ns.Query(
-    new NamespaceQueryParams
-    {
-        RankBy = RankBy.Ann("vector", new[] { 0.1f, 0.1f }),
-        Limit = 10,
-        Consistency = new NamespaceQueryParamsConsistency
-        {
-            Level = NamespaceQueryParamsConsistencyLevel.Eventual,
-        },
-    }
-);
+# Query with eventual consistency
+ns.query(
+    rank_by=('vector', 'ANN', [0.1, 0.1]),
+    limit=10,
+    consistency={'level': 'eventual'},
+)
 ```
 ```ruby
 ns = tpuf.namespace("disable-backpressure-example-rb")
@@ -207,6 +188,44 @@ ns.query(
   limit: 10,
   consistency: { level: "eventual" },
 )
+```
+```rust
+    let ns = client.namespace("disable-backpressure-example-rs");
+
+    // Write with backpressure disabled
+    ns.write()
+        .upsert_rows([Row::new(1).vector([0.1, 0.1])])
+        .distance_metric(DistanceMetric::CosineDistance)
+        .disable_backpressure(true)
+        .send()
+        .await?;
+
+    // Query with eventual consistency
+    ns.query()
+        .rank_by(RankBy::ann("vector", [0.1, 0.1]))
+        .limit(10)
+        .consistency(QueryConfigConsistencyLevel::Eventual)
+        .send()
+        .await?;
+```
+```typescript
+const ns = tpuf.namespace(`disable-backpressure-example-ts`);
+
+// Write with backpressure disabled
+await ns.write({
+  upsert_rows: [
+    { id: 1, vector: [0.1, 0.1] },
+  ],
+  distance_metric: "cosine_distance",
+  disable_backpressure: true,
+});
+
+// Query with eventual consistency
+await ns.query({
+  rank_by: ["vector", "ANN", [0.1, 0.1]],
+  limit: 10,
+  consistency: { level: "eventual" },
+});
 ```
 <!-- /multilang -->
 
@@ -268,9 +287,97 @@ See our [Performance guide](/docs/performance) for more optimization strategies.
 
 ### Examples
 
-Below are code snippets that optimize ingestion throughput by implementing these strategies with our Python and Go client SDKs. The comments in each snippet describe language-specific details.
+Below are code snippets that optimize ingestion throughput by implementing these strategies with our Go, Python, and Rust client SDKs. The comments in each snippet describe language-specific details.
 
 <!-- multilang -->
+```go
+package main
+
+import (
+	"context"
+	"fmt"
+	"math/rand"
+	"os"
+	"runtime"
+	"sync"
+	"time"
+
+	"github.com/turbopuffer/turbopuffer-go/v2"
+	"github.com/turbopuffer/turbopuffer-go/v2/option"
+	"github.com/turbopuffer/turbopuffer-go/v2/packages/param"
+)
+
+const (
+	maxDocuments = 16_384
+	// Batch your writes: group rows into batches up to 512 MB
+	batchSize = 4_096
+	vectorDim = 1024
+)
+
+func loadData() []turbopuffer.RowParam {
+    // Randomly generate some data.
+    // Replace with code to load your actual data.
+	rows := make([]turbopuffer.RowParam, maxDocuments)
+	for i := range rows {
+		vec := make([]float32, vectorDim)
+		for j := range vec {
+			vec[j] = rand.Float32()
+		}
+		rows[i] = turbopuffer.RowParam{
+			"id":     i,
+			"vector": vec,
+		}
+	}
+	return rows
+}
+
+func writeBatch(ctx context.Context, ns turbopuffer.Namespace, batch []turbopuffer.RowParam) error {
+	_, err := ns.Write(ctx, turbopuffer.NamespaceWriteParams{
+		UpsertRows:     batch,
+		DistanceMetric: turbopuffer.DistanceMetricCosineDistance,
+		// Use lower precision vectors when possible
+		Schema: map[string]turbopuffer.AttributeSchemaParam{
+			"vector": {AttributeSchemaConfig: &turbopuffer.AttributeSchemaConfigParam{Type: "[1024]f16", Ann: param.Override[turbopuffer.AttributeSchemaConfigAnnParam](true)}},
+		},
+		// Disable backpressure: disable 2 GiB unindexed WAL cap for bulk ingestion
+		DisableBackpressure: turbopuffer.Bool(true),
+	})
+	return err
+}
+
+func main() {
+	ctx := context.Background()
+	tpuf := turbopuffer.NewClient(
+		option.WithAPIKey(os.Getenv("TURBOPUFFER_API_KEY")),
+		option.WithRegion("gcp-us-central1"),
+	)
+
+	ns := tpuf.Namespace("async-vector-ingest-test-go")
+
+	allVectors := loadData()
+
+	start := time.Now()
+
+	// Write batches in parallel: up to NCPUs * 2 batches.
+	var wg sync.WaitGroup
+	sem := make(chan struct{}, 2*runtime.NumCPU())
+	for i := 0; i < len(allVectors); i += batchSize {
+		batch := allVectors[i:min(i+batchSize, len(allVectors))]
+		sem <- struct{}{} // acquire slot
+		wg.Add(1)
+		go func(batch []turbopuffer.RowParam) {
+			defer wg.Done()
+			defer func() { <-sem }() // release slot
+			if err := writeBatch(ctx, ns, batch); err != nil {
+				panic(err)
+			}
+		}(batch)
+	}
+	wg.Wait()
+
+	fmt.Printf("Total time: %.2f seconds\n", time.Since(start).Seconds())
+}
+```
 ```python
 # $ pip install turbopuffer
 import asyncio
@@ -344,92 +451,74 @@ if __name__ == '__main__':
     with multiprocessing.Pool(PROCESS_COUNT) as pool:
         pool.map(worker, chunks)
 ```
-```go
-package main
+```rust
+// $ cargo add turbopuffer tokio futures rand --features tokio/full
+use std::time::Instant;
 
-import (
-	"context"
-	"fmt"
-	"math/rand"
-	"os"
-	"runtime"
-	"sync"
-	"time"
+use futures::stream::{self, StreamExt};
+use turbopuffer::Client;
+use turbopuffer::Namespace;
+use turbopuffer::types::{AttributeSchemaConfig, DistanceMetric, Row};
 
-	"github.com/turbopuffer/turbopuffer-go/v2"
-	"github.com/turbopuffer/turbopuffer-go/v2/option"
-	"github.com/turbopuffer/turbopuffer-go/v2/packages/param"
-)
+const MAX_DOCUMENTS: u64 = 16_384;
+// Batch your writes: group rows into batches up to 512 MB
+const BATCH_SIZE: usize = 4_096;
+const VECTOR_DIM: usize = 1024;
 
-const (
-	maxDocuments = 16_384
-	// Batch your writes: group rows into batches up to 512 MB
-	batchSize = 4_096
-	vectorDim = 1024
-)
-
-func loadData() []turbopuffer.RowParam {
-    // Randomly generate some data.
-    // Replace with code to load your actual data.
-	rows := make([]turbopuffer.RowParam, maxDocuments)
-	for i := range rows {
-		vec := make([]float32, vectorDim)
-		for j := range vec {
-			vec[j] = rand.Float32()
-		}
-		rows[i] = turbopuffer.RowParam{
-			"id":     i,
-			"vector": vec,
-		}
-	}
-	return rows
+fn load_data() -> Vec<Row> {
+    // Randomly generate some data. Replace with code to load your actual data.
+    (0..MAX_DOCUMENTS)
+        .map(|id| {
+            let vector: Vec<f32> = (0..VECTOR_DIM).map(|_| rand::random()).collect();
+            Row::new(id).vector(vector)
+        })
+        .collect()
 }
 
-func writeBatch(ctx context.Context, ns turbopuffer.Namespace, batch []turbopuffer.RowParam) error {
-	_, err := ns.Write(ctx, turbopuffer.NamespaceWriteParams{
-		UpsertRows:     batch,
-		DistanceMetric: turbopuffer.DistanceMetricCosineDistance,
-		// Use lower precision vectors when possible
-		Schema: map[string]turbopuffer.AttributeSchemaConfigParam{
-			"vector": {Type: "[1024]f16", Ann: param.Override[turbopuffer.AttributeSchemaConfigAnnParam](true)},
-		},
-		// Disable backpressure: disable 2 GiB unindexed WAL cap for bulk ingestion
-		DisableBackpressure: turbopuffer.Bool(true),
-	})
-	return err
+async fn write_batch(ns: Namespace, batch: Vec<Row>) -> turbopuffer::Result<()> {
+    ns.write()
+        .upsert_rows(batch)
+        .distance_metric(DistanceMetric::CosineDistance)
+        // Use lower precision vectors when possible
+        .schema([(
+            "vector",
+            AttributeSchemaConfig::new(format!("[{VECTOR_DIM}]f16")).ann(true),
+        )])
+        // Disable backpressure: disable 2 GiB unindexed WAL cap for bulk ingestion
+        .disable_backpressure(true)
+        .send()
+        .await?;
+    Ok(())
 }
 
-func main() {
-	ctx := context.Background()
-	tpuf := turbopuffer.NewClient(
-		option.WithAPIKey(os.Getenv("TURBOPUFFER_API_KEY")),
-		option.WithRegion("gcp-us-central1"),
-	)
+#[tokio::main]
+async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    // The API key is read from TURBOPUFFER_API_KEY. Create one here: https://turbopuffer.com/dashboard
+    let client = Client::builder()
+        .region("gcp-us-central1") // choose best region: https://turbopuffer.com/docs/regions
+        .build()?;
 
-	ns := tpuf.Namespace("async-vector-ingest-test-go")
+    let ns = client.namespace("async-vector-ingest-test-rs");
 
-	allVectors := loadData()
+    let all_rows = load_data();
 
-	start := time.Now()
+    let start = Instant::now();
 
-	// Write batches in parallel: up to NCPUs * 2 batches.
-	var wg sync.WaitGroup
-	sem := make(chan struct{}, 2*runtime.NumCPU())
-	for i := 0; i < len(allVectors); i += batchSize {
-		batch := allVectors[i:min(i+batchSize, len(allVectors))]
-		sem <- struct{}{} // acquire slot
-		wg.Add(1)
-		go func(batch []turbopuffer.RowParam) {
-			defer wg.Done()
-			defer func() { <-sem }() // release slot
-			if err := writeBatch(ctx, ns, batch); err != nil {
-				panic(err)
-			}
-		}(batch)
-	}
-	wg.Wait()
+    // Write batches in parallel: up to NCPUs * 2 batches. Spawning each write as a tokio task
+    // spreads request serialization across all cores. Namespace clones are cheap and share the
+    // client's connection pool.
+    let concurrency = 2 * std::thread::available_parallelism()?.get();
+    let mut writes = stream::iter(all_rows)
+        .chunks(BATCH_SIZE)
+        .map(|batch| tokio::spawn(write_batch(ns.clone(), batch)))
+        .buffer_unordered(concurrency);
+    while let Some(result) = writes.next().await {
+        result??;
+    }
 
-	fmt.Printf("Total time: %.2f seconds\n", time.Since(start).Seconds())
+    println!("Total time: {:.2} seconds", start.elapsed().as_secs_f64());
+
+    Ok(())
 }
 ```
 <!-- /multilang -->
