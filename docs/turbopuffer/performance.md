@@ -144,7 +144,8 @@ large metadata.
 performance, we recommend keeping the first-stage ranking function simple, with
 only a few attributes being used to compute BM25 scores and/or attribute
 scores, retrieving in the order of 100 to 1,000 hits, and then applying more
-sophisticated ranking in the second stage.
+sophisticated ranking in the second stage, for example with
+[native reranking](/docs/reranking).
 * **Understand how Glob and Regex filters are optimized.** Under the hood, they
 use a trigram-based index to quickly narrow down the set of possibly matching candidates.
 As a general rule of thumb, the more specific the pattern, the better the performance. Anchored

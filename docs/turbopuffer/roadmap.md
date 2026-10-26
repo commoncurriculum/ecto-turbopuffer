@@ -1,6 +1,6 @@
 # Roadmap & Changelog
 
-**Last updated:** September 16, 2026
+**Last updated:** October 22, 2026
 
 ## Roadmap
 
@@ -19,9 +19,18 @@
 
 ## Changelog
 
+### October 2026
+
+- 🦀 [Rust API client](https://github.com/turbopuffer/turbopuffer-rust) beta release
+
 ### September 2026
 
-- 🪓 [Namespace sharding](/docs/sharding) is generally available
+- 🏗️ Faster storage engine coming soon: follow the [turbopuffer v3 devlog](/v3) for updates
+- 🪓 [Sharding](/docs/sharding) is generally available: scale a single namespace up to 256TB
+- 🥇 [Native reranking](https://x.com/turbopuffer/status/2103170178028872159)  with models like Jev and Voyage Rerank 3 [private beta]
+- ⏭️ Paginate results with [`offset`](/docs/query#param-offset)
+- 👀 Monitor a long-running [`copy_from_namespace`](/docs/write#monitoring-copy-progress)
+- 🔐 [2025-2026 SOC 2 Type 2 annual report](https://app.drata.com/trust/b4dc7714-f52d-4f50-97e3-ff56a41c2b5c) is now available
 
 ### August 2026
 
@@ -164,7 +173,7 @@
   [enforce private networking](/docs/private-networking#enforcement)
 - 💎 Ruby client gem renamed from `turbopuffer-ruby` to
   [turbopuffer](https://rubygems.org/gems/turbopuffer)
-- 📝 [2025 SOC 2 Type 2 audit report](/docs/security#soc2)
+- 📝 [2024-2025 SOC 2 Type 2 annual report](/docs/security#soc2) is now available
 - 🇮🇪 [Ireland region](/docs/regions)
 
 ### August 2025

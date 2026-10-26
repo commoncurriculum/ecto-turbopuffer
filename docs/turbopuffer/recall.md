@@ -105,34 +105,25 @@ curl https://gcp-us-central1.turbopuffer.com/v1/namespaces/recall-example-curl/_
 #   "avg_ann_count": 10.0
 # }
 ```
-```python
-import turbopuffer
+```cs
+// dotnet add package Turbopuffer
+using System;
+using Turbopuffer;
+using Turbopuffer.Models.Namespaces;
 
-tpuf = turbopuffer.Turbopuffer(
-    region='gcp-us-central1', # choose best region: https://turbopuffer.com/docs/regions
-)
+using var tpuf = new TurbopufferClient
+{
+    // Pick the right region: https://turbopuffer.com/docs/regions
+    Region = "gcp-us-central1",
+};
 
-ns = tpuf.namespace(f'recall-example-py')
+var ns = tpuf.Namespace("recall-example-csharp");
 
-# If an error occurs, this call raises a turbopuffer.APIError if a retry was not successful.
-recall = ns.recall(num=5, top_k=10)
-print(recall)
-# NamespaceRecallResponse(avg_ann_count=10.0, avg_exhaustive_count=10.0, avg_recall=1.0)
-```
-```typescript
-import { Turbopuffer } from "@turbopuffer/turbopuffer";
-
-const tpuf = new Turbopuffer({
-  region: "gcp-us-central1", // choose best region: https://turbopuffer.com/docs/regions
-});
-
-const ns = tpuf.namespace(`recall-example-ts`);
-
-const recall = await ns.recall({
-  num: 5,
-  top_k: 10,
-});
-console.log(recall);
+// If an error occurs, this call raises a TurbopufferApiException if
+// a retry was not successful.
+var recall = await ns.Recall(new NamespaceRecallParams { Num = 5, TopK = 10 });
+Console.WriteLine(recall);
+// {"avg_recall": 1.0, "avg_exhaustive_count": 10.0, "avg_ann_count": 10.0}
 ```
 ```go
 package main
@@ -190,25 +181,19 @@ public class Recall {
   }
 }
 ```
-```cs
-// dotnet add package Turbopuffer
-using System;
-using Turbopuffer;
-using Turbopuffer.Models.Namespaces;
+```python
+import turbopuffer
 
-using var tpuf = new TurbopufferClient
-{
-    // Pick the right region: https://turbopuffer.com/docs/regions
-    Region = "gcp-us-central1",
-};
+tpuf = turbopuffer.Turbopuffer(
+    region='gcp-us-central1', # choose best region: https://turbopuffer.com/docs/regions
+)
 
-var ns = tpuf.Namespace("recall-example-csharp");
+ns = tpuf.namespace(f'recall-example-py')
 
-// If an error occurs, this call raises a TurbopufferApiException if
-// a retry was not successful.
-var recall = await ns.Recall(new NamespaceRecallParams { Num = 5, TopK = 10 });
-Console.WriteLine(recall);
-// {"avg_recall": 1.0, "avg_exhaustive_count": 10.0, "avg_ann_count": 10.0}
+# If an error occurs, this call raises a turbopuffer.APIError if a retry was not successful.
+recall = ns.recall(num=5, top_k=10)
+print(recall)
+# NamespaceRecallResponse(avg_ann_count=10.0, avg_exhaustive_count=10.0, avg_recall=1.0)
 ```
 ```ruby
 require "turbopuffer"
@@ -223,6 +208,46 @@ ns = tpuf.namespace("recall-example-rb")
 recall = ns.recall(num: 5, top_k: 10)
 puts recall
 # {avg_ann_count: 10.0, avg_exhaustive_count: 10.0, avg_recall: 1.0}
+```
+```rust
+use turbopuffer::Client;
+use turbopuffer::serde_json;
+
+#[tokio::main]
+async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    // The API key is read from TURBOPUFFER_API_KEY. Create one here: https://turbopuffer.com/dashboard
+    let client = Client::builder()
+        .region("gcp-us-central1") // choose best region: https://turbopuffer.com/docs/regions
+        .build()?;
+
+    let ns = client.namespace("recall-example-rs");
+
+    // If an error occurs, this call returns a turbopuffer::Error once retries are exhausted.
+    let recall = ns.recall().num(5).top_k(10).send().await?;
+    println!("{}", serde_json::to_string_pretty(&recall)?);
+    // {
+    //   "avg_ann_count": 10.0,
+    //   "avg_exhaustive_count": 10.0,
+    //   "avg_recall": 1.0
+    // }
+
+    Ok(())
+}
+```
+```typescript
+import { Turbopuffer } from "@turbopuffer/turbopuffer";
+
+const tpuf = new Turbopuffer({
+  region: "gcp-us-central1", // choose best region: https://turbopuffer.com/docs/regions
+});
+
+const ns = tpuf.namespace(`recall-example-ts`);
+
+const recall = await ns.recall({
+  num: 5,
+  top_k: 10,
+});
+console.log(recall);
 ```
 <!-- /multilang -->
 

@@ -14,6 +14,42 @@ specify an embedding model. Writes and queries to that attribute are turned into
 vectors on the fly.
 
 <!-- multilang -->
+```rust
+use turbopuffer::Client;
+use turbopuffer::types::{AttributeSchemaConfig, DistanceMetric, Row};
+
+#[tokio::main]
+async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    // The API key is read from TURBOPUFFER_API_KEY. Create one here: https://turbopuffer.com/dashboard
+    let client = Client::builder()
+        .region("gcp-us-central1") // choose best region: https://turbopuffer.com/docs/regions
+        .build()?;
+
+    // create a new namespace with native embeddings
+    let ns = client.namespace("embedding-intro-rs");
+    ns.write()
+        .upsert_rows([
+            Row::new(1)
+                .insert("text", "A cat sleeping on a windowsill")
+                .insert("category", "animal"),
+            Row::new(2)
+                .insert("text", "A playful kitten chasing a toy")
+                .insert("category", "animal"),
+        ])
+        .distance_metric(DistanceMetric::CosineDistance)
+        .schema([(
+            "text",
+            AttributeSchemaConfig::new("string")
+                // use native embeddings by setting `embed` on a text attribute
+                // to your favorite model
+                .embed("nvidia/nemotron-3-embed-8b"),
+        )])
+        .send()
+        .await?;
+
+    Ok(())
+}
+```
 ```typescript
 import { Turbopuffer } from "@turbopuffer/turbopuffer";
 
@@ -105,38 +141,14 @@ Each request is accepted or rate limited in full. For example, a large batch wri
 
 ## Models
 
-The following models are currently available as managed embedding models. If you
-see a model you'd like to use that isn't listed here, please [get in touch](/contact).
+The following models are available for native embeddings. Click on a model in
+the table for detailed information, and use the region selector above the table
+to see which models are available in each [region](/docs/regions). If you'd like
+to use a model that isn't listed here, please [get in touch](/contact).
+
 The [embedding changelog](/docs/embedding/changelog) tracks the models we've
-added, deprecated, and repriced over time.
-
-A model listed here without a price is still available, but pricing is TBD.
-We'll always try to work with our partners to price match your existing
-embedding provider.
-
-### Recommendations
-
-Picking an embedding model can deeply impact the quality, cost, and latency of
-your retrieval pipeline. Unfortunately, it's both a difficult decision and one
-that's hard to change (though we're working on making it easy). The quality of
-an embedding model is highly dependent on exactly what you're searching over.
-The best way to choose an embedding model is to [run an
-eval](https://georgianailab.substack.com/p/evaluating-retrieval-without-ground)
-that measures how an embedding model affects your application. If you can't do
-that, the [RTEB](https://huggingface.co/spaces/embedding-benchmark/RTEB)
-scores in the table below are an ok guide.
-
-When picking a model, we recommend thinking about the quality, cost, and latency
-tradeoffs in your application. It may be tempting to always pick the "best"
-model, but if you need interactive search your users may be more sensitive to
-latency than they are to slightly worse recall. Conversely, if you're powering a
-search agent it may be better to spend more up-front on an embedding model to
-reduce the number of tokens the agent needs to answer questions. 
-
-### Supported models
-
-The following models are supported for native embeddings. Click on a model in
-the table below for detailed information.
+added, deprecated, and repriced over time. A few more things to know about the
+models above:
 
 - Context length is the maximum number of input tokens a model will consider
   in an individual embedding input.
@@ -154,14 +166,36 @@ the table below for detailed information.
 - The listed [RTEB](https://huggingface.co/spaces/embedding-benchmark/RTEB)
   score is the overall score. 
 
-- Use the region selector above the table to see which models are available in
-  each [region](/docs/regions).
-
 - Every model runs with zero data retention: our
   [inference providers](/docs/security/subprocessors) do not store the content
   you send, and do not train on it.
 
-If you're interested in using a model not available in the list below [contact us](/contact).
+- If you have a [Business Associate Agreement (BAA)](/docs/security#hipaa)
+  with turbopuffer, don't send protected health information (PHI) to OpenAI
+  models. They are not HIPAA-eligible.
+
+### Recommendations
+
+Picking an embedding model can deeply impact the quality, cost, and latency of
+your retrieval pipeline. Unfortunately, it's both a difficult decision and one
+that's hard to change (though we're working on making it easy). The quality of
+an embedding model is highly dependent on exactly what you're searching over.
+The best way to choose an embedding model is to [run an
+eval](https://georgianailab.substack.com/p/evaluating-retrieval-without-ground)
+that measures how an embedding model affects your application. If you can't do
+that, the [RTEB](https://huggingface.co/spaces/embedding-benchmark/RTEB)
+scores in the table above are an ok guide.
+
+When picking a model, we recommend thinking about the quality, cost, and latency
+tradeoffs in your application. It may be tempting to always pick the "best"
+model, but if you need interactive search your users may be more sensitive to
+latency than they are to slightly worse recall. Conversely, if you're powering a
+search agent it may be better to spend more up-front on an embedding model to
+reduce the number of tokens the agent needs to answer questions. 
+Every [query](/docs/query#responsefield-performance) and
+[write](/docs/write#responsefield-performance) response reports the time spent
+embedding as `embedding_ms`, so you can measure a model's latency against your
+own data before committing to it.
 
 ### Deprecated models
 
@@ -179,6 +213,66 @@ remove support for a model.
 Create a new namespace with native embeddings on a `text` attribute.
 
 <!-- multilang -->
+```rust
+use turbopuffer::Client;
+use turbopuffer::types::{
+    AttributeEmbedConfig, AttributeSchemaConfig, DistanceMetric, Expr, RankBy, Row,
+};
+
+#[tokio::main]
+async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    // The API key is read from TURBOPUFFER_API_KEY. Create one here: https://turbopuffer.com/dashboard
+    let client = Client::builder()
+        .region("gcp-us-central1") // choose best region: https://turbopuffer.com/docs/regions
+        .build()?;
+
+    // create a new namespace with native embeddings
+    let ns = client.namespace("embedding-new-namespace-rs");
+    ns.write()
+        .upsert_rows([
+            Row::new(1)
+                .insert("text", "A cat sleeping on a windowsill")
+                .insert("category", "animal"),
+            Row::new(2)
+                .insert("text", "A playful kitten chasing a toy")
+                .insert("category", "animal"),
+        ])
+        .distance_metric(DistanceMetric::CosineDistance)
+        .schema([(
+            "text",
+            AttributeSchemaConfig::new("string")
+                // use native embeddings to set an embedding model and the size
+                // of the embedding vector
+                .embed(AttributeEmbedConfig::new("nvidia/nemotron-3-embed-8b").dims(1024)),
+        )])
+        .send()
+        .await?;
+
+    // future writes don't need to specify the schema or the `embed_text` attribute.
+    // the text attribute is turned into a vector on every write.
+    ns.write()
+        .upsert_rows([
+            Row::new(3)
+                .insert("text", "An airplane flying through clouds")
+                .insert("category", "vehicle"),
+            Row::new(4)
+                .insert("text", "A shiny red sports car")
+                .insert("category", "vehicle"),
+        ])
+        .send()
+        .await?;
+
+    // use the Embed function with ANN or kNN to turn text input into a vector
+    ns.query()
+        .include_attributes(["id", "text", "embed_text"])
+        .rank_by(RankBy::ann("text", Expr::embed("something high energy")))
+        .limit(10)
+        .send()
+        .await?;
+
+    Ok(())
+}
+```
 ```typescript
 import { Turbopuffer } from "@turbopuffer/turbopuffer";
 
@@ -247,6 +341,66 @@ If you've already invested in embedding a large batch of documents, you can
 ingest them into turbopuffer and use native embeddings to query them.
 
 <!-- multilang -->
+```rust
+// $ cargo add turbopuffer tokio rand --features tokio/full
+use turbopuffer::Client;
+use turbopuffer::types::{AttributeSchemaConfig, DistanceMetric, EmbedParams, Expr, RankBy, Row};
+
+/// Stand-in for your own embedding model.
+fn embed(_text: &str) -> Vec<f32> {
+    (0..1024).map(|_| rand::random()).collect()
+}
+
+#[tokio::main]
+async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    // The API key is read from TURBOPUFFER_API_KEY. Create one here: https://turbopuffer.com/dashboard
+    let client = Client::builder()
+        .region("gcp-us-central1") // choose best region: https://turbopuffer.com/docs/regions
+        .build()?;
+
+    // creating a new namespace that uses your own embedding model to embed
+    // documents, and write a few documents into the namespace.
+    let ns = client.namespace("embedding-query-only-rs");
+    ns.write()
+        .upsert_rows([
+            Row::new(1)
+                .vector(embed("walrus narwhal"))
+                .insert("public", true)
+                .insert("text", "walrus narwhal"),
+            Row::new(2)
+                .vector(embed("pufferfish clownfish swordfish"))
+                .insert("public", false)
+                .insert("text", "pufferfish clownfish swordfish"),
+        ])
+        .distance_metric(DistanceMetric::CosineDistance)
+        .schema([(
+            "text",
+            AttributeSchemaConfig::new("string")
+                .full_text_search(true)
+                .regex(true),
+        )])
+        .send()
+        .await?;
+
+    // use the Embed function with an explicit model to let native embeddings handle
+    // the query embeddings. this should match the model you're using to embed
+    // documents or you might get some strange results.
+    ns.query()
+        .include_attributes(["id", "text", "vector"])
+        .rank_by(RankBy::ann(
+            "vector",
+            Expr::embed_with_params(
+                "something high energy",
+                EmbedParams::new().model("nvidia/nemotron-3-embed-8b"),
+            ),
+        ))
+        .limit(10)
+        .send()
+        .await?;
+
+    Ok(())
+}
+```
 ```typescript
 import { Turbopuffer } from "@turbopuffer/turbopuffer";
 
@@ -304,6 +458,77 @@ documents are embedded for you, and to roll a write path over to native
 embeddings gradually instead of all at once.
 
 <!-- multilang -->
+```rust
+// $ cargo add turbopuffer tokio rand --features tokio/full
+use turbopuffer::Client;
+use turbopuffer::types::{
+    AttributeEmbedConfig, AttributeSchemaConfig, DistanceMetric, Expr, RankBy, Row,
+};
+
+/// Stand-in for your own embedding model.
+fn embed(_text: &str) -> Vec<f32> {
+    (0..1024).map(|_| rand::random()).collect()
+}
+
+#[tokio::main]
+async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    // The API key is read from TURBOPUFFER_API_KEY. Create one here: https://turbopuffer.com/dashboard
+    let client = Client::builder()
+        .region("gcp-us-central1") // choose best region: https://turbopuffer.com/docs/regions
+        .build()?;
+
+    // create a namespace with native embeddings on `text`
+    let ns = client.namespace("embedding-supplied-vectors-rs");
+    ns.write()
+        .upsert_rows([Row::new(1).insert("text", "walrus narwhal")])
+        .distance_metric(DistanceMetric::CosineDistance)
+        .schema([(
+            "text",
+            AttributeSchemaConfig::new("string").embed(
+                AttributeEmbedConfig::new("nvidia/nemotron-3-embed-8b")
+                    .attribute("vector")
+                    .dims(1024),
+            ),
+        )])
+        .send()
+        .await?;
+
+    // backfill documents you already embedded elsewhere. these are stored as sent,
+    // and are never sent to the embedding provider.
+    ns.write()
+        .upsert_rows([
+            Row::new(2)
+                .vector(embed("pufferfish clownfish swordfish"))
+                .insert("text", "pufferfish clownfish swordfish"),
+            Row::new(3)
+                .vector(embed("zebra horse antelope"))
+                .insert("text", "zebra horse antelope"),
+        ])
+        .send()
+        .await?;
+
+    // you can mix and match pre-computed and native embeddings in the same write.
+    ns.write()
+        .upsert_rows([
+            Row::new(4)
+                .vector(embed("manatee dugong"))
+                .insert("text", "manatee dugong"),
+            Row::new(5).insert("text", "octopus cuttlefish"),
+        ])
+        .send()
+        .await?;
+
+    // queries are unaffected: every row has a vector either way
+    ns.query()
+        .include_attributes(["id", "text", "vector"])
+        .rank_by(RankBy::ann("text", Expr::embed("a pointy fish")))
+        .limit(10)
+        .send()
+        .await?;
+
+    Ok(())
+}
+```
 ```typescript
 import { Turbopuffer } from "@turbopuffer/turbopuffer";
 
@@ -410,6 +635,87 @@ validate that the model already in use is compatible with the native embedding
 model. 
 
 <!-- multilang -->
+```rust
+// $ cargo add turbopuffer tokio rand --features tokio/full
+use turbopuffer::Client;
+use turbopuffer::types::{
+    AttributeEmbedConfig, AttributeSchemaConfig, DistanceMetric, EmbedParams, Expr, RankBy, Row,
+};
+
+/// Stand-in for your own embedding model.
+fn random_vector(_text: &str) -> Vec<f32> {
+    (0..1024).map(|_| rand::random()).collect()
+}
+
+#[tokio::main]
+async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    // The API key is read from TURBOPUFFER_API_KEY. Create one here: https://turbopuffer.com/dashboard
+    let client = Client::builder()
+        .region("gcp-us-central1") // choose best region: https://turbopuffer.com/docs/regions
+        .build()?;
+
+    // create a new namespace without native embeddings
+    let ns = client.namespace("embedding-enable-rs");
+    ns.write()
+        .upsert_rows([
+            Row::new(1)
+                .vector(random_vector("walrus narwhal"))
+                .insert("text", "walrus narwhal"),
+            Row::new(2)
+                .vector(random_vector("pufferfish clownfish swordfish"))
+                .insert("text", "pufferfish clownfish swordfish"),
+        ])
+        .distance_metric(DistanceMetric::CosineDistance)
+        .schema([(
+            "text",
+            AttributeSchemaConfig::new("string")
+                .full_text_search(true)
+                .regex(true),
+        )])
+        .send()
+        .await?;
+
+    // switch your queries to use query-time embedding
+    ns.query()
+        .include_attributes(["id", "text", "vector"])
+        .rank_by(RankBy::ann(
+            "vector",
+            Expr::embed_with_params(
+                "a pointy fish",
+                EmbedParams::new().model("nvidia/nemotron-3-embed-8b"),
+            ),
+        ))
+        .limit(10)
+        .send()
+        .await?;
+
+    // update your schema in-place to enable native embeddings
+    ns.write()
+        .schema([(
+            "text",
+            AttributeSchemaConfig::new("string")
+                .embed(AttributeEmbedConfig::new("nvidia/nemotron-3-embed-8b").attribute("vector")),
+        )])
+        .send()
+        .await?;
+
+    // queries no longer need to specify a model
+    ns.query()
+        .include_attributes(["id", "text", "vector"])
+        .rank_by(RankBy::ann("text", Expr::embed("lots and lots of blubber")))
+        .limit(10)
+        .send()
+        .await?;
+
+    // and writes no longer need to include a vector
+    ns.write()
+        .upsert_rows([Row::new(3).insert("text", "zebra horse antelope")])
+        .send()
+        .await?;
+
+    Ok(())
+}
+```
 ```typescript
 import { Turbopuffer } from "@turbopuffer/turbopuffer";
 
@@ -490,6 +796,65 @@ columns, including automatically generated embedding columns, are untouched
 and can be queried as normal.
 
 <!-- multilang -->
+```rust
+// $ cargo add turbopuffer tokio rand --features tokio/full
+use turbopuffer::Client;
+use turbopuffer::types::{
+    AttributeEmbed, AttributeEmbedConfig, AttributeSchemaConfig, DistanceMetric, Row,
+};
+
+/// Stand-in for your own embedding model.
+fn random_vector(_text: &str) -> Vec<f32> {
+    (0..1024).map(|_| rand::random()).collect()
+}
+
+#[tokio::main]
+async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    // The API key is read from TURBOPUFFER_API_KEY. Create one here: https://turbopuffer.com/dashboard
+    let client = Client::builder()
+        .region("gcp-us-central1") // choose best region: https://turbopuffer.com/docs/regions
+        .build()?;
+
+    // create a new namespace with native embeddings
+    let ns = client.namespace("embedding-disable-rs");
+    ns.write()
+        .upsert_rows([
+            Row::new(1)
+                .insert("text", "A cat sleeping on a windowsill")
+                .insert("category", "animal"),
+            Row::new(2)
+                .insert("text", "A playful kitten chasing a toy")
+                .insert("category", "animal"),
+        ])
+        .distance_metric(DistanceMetric::CosineDistance)
+        .schema([(
+            "text",
+            AttributeSchemaConfig::new("string")
+                .embed(AttributeEmbedConfig::new("nvidia/nemotron-3-embed-8b").dims(1024)),
+        )])
+        .send()
+        .await?;
+
+    // disable native embeddings
+    ns.write()
+        .schema([(
+            "text",
+            AttributeSchemaConfig::new("string").embed(AttributeEmbed::Null),
+        )])
+        .send()
+        .await?;
+
+    // any future write to this namespace requires writing the embed_text vector
+    ns.write()
+        .upsert_rows([Row::new(1)
+            .insert("embed_text", random_vector("zebra horse antelope"))
+            .insert("text", "zebra horse antelope")])
+        .send()
+        .await?;
+
+    Ok(())
+}
+```
 ```typescript
 import { Turbopuffer } from "@turbopuffer/turbopuffer";
 
@@ -556,7 +921,7 @@ await ns.write({
 We work with external partners to provide access to a wide range of embedding
 models. When you use automatic embedding, your data is sent from our cloud
 account to one of our embedding partners. The exact provider depends on the
-[model you select](#supported-models). A full list of embedding providers is
+[model you select](#models). A full list of embedding providers is
 available on our [subprocessors](/docs/security/subprocessors) page.
 
 Our embedding partners are contractually bound to the same or equivalent data
