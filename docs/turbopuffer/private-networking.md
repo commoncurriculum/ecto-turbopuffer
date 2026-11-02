@@ -57,6 +57,7 @@ are made via your private endpoints.
 | aws-us-west-2 | https://privatelink.aws-us-west-2.turbopuffer.com |
 | aws-ap-south-1 | https://privatelink.aws-ap-south-1.turbopuffer.com |
 | aws-sa-east-1 | https://privatelink.aws-sa-east-1.turbopuffer.com |
+| aws-ap-southeast-1 | https://privatelink.aws-ap-southeast-1.turbopuffer.com |
 | gcp-us-central1 | https://<endpoint name>.psc.gcp-us-central1.turbopuffer.com |
 | gcp-us-east1 | https://<endpoint name>.psc.gcp-us-east1.turbopuffer.com |
 | gcp-us-west1 | https://<endpoint name>.psc.gcp-us-west1.turbopuffer.com |

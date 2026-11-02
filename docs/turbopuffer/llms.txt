@@ -5,7 +5,9 @@
 > and extremely scalable. This is the complete documentation for
 > the turbopuffer API and platform.
 
-> In production: 1T+ documents, 25k+ queries/s, 10M+ writes/s.
+> In production: 1T+ documents, 100k+ queries/s, 10M+ writes/s.
+
+- [Pricing](https://turbopuffer.com/pricing.md): Plan minimums, usage rates, discounts, and billing rules
 
 - [Introduction](https://turbopuffer.com/docs/index.md): What turbopuffer is and how it works
 - [Quickstart](https://turbopuffer.com/docs/quickstart.md): Get started with the turbopuffer API using code examples
@@ -22,6 +24,7 @@
 - [Branching](https://turbopuffer.com/docs/branching.md): Instantly clone namespaces with copy-on-write branching
 - [Sharding](https://turbopuffer.com/docs/sharding.md): Scale a single namespace beyond one index by partitioning across shards
 - [Embedding](https://turbopuffer.com/docs/embedding.md): Embed documents and queries
+- [Reranking](https://turbopuffer.com/docs/reranking.md): Rerank search results with managed models
 - [Pinning](https://turbopuffer.com/docs/pinning.md): Reserved compute and disk for predictable cost and performance at sustained high QPS
 
 ## Production

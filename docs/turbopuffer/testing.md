@@ -19,96 +19,79 @@ organization in the dashboard. For cross-region or cross-org copies, use
 [`copy_from_namespace`](/docs/backups).
 
 <!-- multilang -->
-```python
-# tpuf_test.py
+```cs
+// TpufTest.cs
 
-# Run with `pytest tpuf_test.py`.
+// dotnet add package Turbopuffer
+// dotnet add package xunit
+//
+// Run with `dotnet test`.
+using System;
+using System.Threading.Tasks;
+using Turbopuffer;
+using Turbopuffer.Exceptions;
+using Turbopuffer.Models.Namespaces;
+using Turbopuffer.Services;
+using Xunit;
 
-import pytest
-import string
-import random
-import turbopuffer
-from turbopuffer.lib import namespace
+public class TpufTest : IAsyncLifetime
+{
+    private readonly TurbopufferClient _tpuf = new()
+    {
+        // Pick the right region: https://turbopuffer.com/docs/regions
+        Region = "gcp-us-central1",
+    };
 
-tpuf = turbopuffer.Turbopuffer(
-    region='gcp-us-central1', # choose best region: https://turbopuffer.com/docs/regions
-)
+    private INamespaceService _ns = null!;
 
-# Create a namespace for each test, and always delete it afterwards
-@pytest.fixture
-def tpuf_ns():
-    random_suffix = ''.join(random.choices(string.ascii_letters + string.digits, k=32))
-    ns_name = f"test-{random_suffix}"
-    ns = tpuf.namespace(ns_name)
-    try:
-        yield ns
-    finally:
-        try:
-            ns.delete_all()
-        except turbopuffer.NotFoundError:
-            # If the namespace never got created, no cleanup is needed.
-            pass
-
-def test_query(tpuf_ns: namespace.Namespace):
-    tpuf_ns.write(
-      upsert_rows=[
-        {"id": 1, "vector": [1, 1]},
-        {"id": 2, "vector": [2, 2]}
-      ],
-      distance_metric="cosine_distance",
-    )
-    res = tpuf_ns.query(rank_by=("vector", "ANN", [1.1, 1.1]), limit=10)
-    assert res.rows[0].id == 1
-```
-```typescript
-// tpuf.test.ts
-
-// Run with `vitest ./tpuf.test.ts`.
-
-import { expect, test, beforeEach, afterEach, describe } from 'vitest'
-import { NotFoundError, Turbopuffer } from "@turbopuffer/turbopuffer";
-import { Namespace } from "@turbopuffer/turbopuffer/resources";
-import * as crypto from "crypto";
-
-const tpuf = new Turbopuffer({
-  region: "gcp-us-central1", // choose best region: https://turbopuffer.com/docs/regions
-});
-
-describe("Turbopuffer namespace tests", () => {
-  let ns: Namespace;
-
-  beforeEach(async () => {
-    const randomSuffix = crypto.randomBytes(16).toString("hex");
-    const nsName = `test-${randomSuffix}`;
-    ns = tpuf.namespace(nsName);
-  });
-
-  afterEach(async () => {
-    try {
-      await ns.deleteAll();
-    } catch (e: any) {
-      if (!(e instanceof NotFoundError)) {
-        // If the namespace never got created, no cleanup is needed.
-        throw e;
-      }
+    // Create a namespace for each test, and always delete it afterwards.
+    public Task InitializeAsync()
+    {
+        _ns = _tpuf.Namespace($"test-{Guid.NewGuid():N}");
+        return Task.CompletedTask;
     }
-  });
 
-  test("query test", async () => {
-    await ns.write({
-      upsert_rows: [
-        { id: 1, vector: [1, 1] },
-        { id: 2, vector: [2, 2] },
-      ],
-      distance_metric: "euclidean_squared",
-    });
-    const res = await ns.query({
-      rank_by: ["vector", "ANN", [1.1, 1.1]],
-      limit: 10,
-    });
-    expect(res.rows![0].id).toBe(1);
-  });
-});
+    public async Task DisposeAsync()
+    {
+        try
+        {
+            await _ns.DeleteAll(new NamespaceDeleteAllParams());
+        }
+        catch (TurbopufferNotFoundException)
+        {
+            // If the namespace never got created, no cleanup is needed.
+        }
+        _tpuf.Dispose();
+    }
+
+    [Fact]
+    public async Task TestQuery()
+    {
+        await _ns.Write(
+            new NamespaceWriteParams
+            {
+                UpsertRows =
+                [
+                    new Row().Set("id", 1).Set("vector", new[] { 1.0f, 1.0f }),
+                    new Row().Set("id", 2).Set("vector", new[] { 2.0f, 2.0f }),
+                ],
+                DistanceMetric = DistanceMetric.CosineDistance,
+            }
+        );
+
+        var result = await _ns.Query(
+            new NamespaceQueryParams
+            {
+                RankBy = RankBy.Ann("vector", new[] { 1.1f, 1.1f }),
+                Limit = 10,
+            }
+        );
+        var rows = result.GetRows();
+
+        Assert.Equal(2, rows.Count);
+        Assert.Equal(1, rows[0].Get<int>("id"));
+    }
+}
 ```
 ```go
 // tpuf_test.go
@@ -246,79 +229,46 @@ public class TpufTest {
   }
 }
 ```
-```cs
-// TpufTest.cs
+```python
+# tpuf_test.py
 
-// dotnet add package Turbopuffer
-// dotnet add package xunit
-//
-// Run with `dotnet test`.
-using System;
-using System.Threading.Tasks;
-using Turbopuffer;
-using Turbopuffer.Exceptions;
-using Turbopuffer.Models.Namespaces;
-using Turbopuffer.Services;
-using Xunit;
+# Run with `pytest tpuf_test.py`.
 
-public class TpufTest : IAsyncLifetime
-{
-    private readonly TurbopufferClient _tpuf = new()
-    {
-        // Pick the right region: https://turbopuffer.com/docs/regions
-        Region = "gcp-us-central1",
-    };
+import pytest
+import string
+import random
+import turbopuffer
+from turbopuffer.lib import namespace
 
-    private INamespaceService _ns = null!;
+tpuf = turbopuffer.Turbopuffer(
+    region='gcp-us-central1', # choose best region: https://turbopuffer.com/docs/regions
+)
 
-    // Create a namespace for each test, and always delete it afterwards.
-    public Task InitializeAsync()
-    {
-        _ns = _tpuf.Namespace($"test-{Guid.NewGuid():N}");
-        return Task.CompletedTask;
-    }
+# Create a namespace for each test, and always delete it afterwards
+@pytest.fixture
+def tpuf_ns():
+    random_suffix = ''.join(random.choices(string.ascii_letters + string.digits, k=32))
+    ns_name = f"test-{random_suffix}"
+    ns = tpuf.namespace(ns_name)
+    try:
+        yield ns
+    finally:
+        try:
+            ns.delete_all()
+        except turbopuffer.NotFoundError:
+            # If the namespace never got created, no cleanup is needed.
+            pass
 
-    public async Task DisposeAsync()
-    {
-        try
-        {
-            await _ns.DeleteAll(new NamespaceDeleteAllParams());
-        }
-        catch (TurbopufferNotFoundException)
-        {
-            // If the namespace never got created, no cleanup is needed.
-        }
-        _tpuf.Dispose();
-    }
-
-    [Fact]
-    public async Task TestQuery()
-    {
-        await _ns.Write(
-            new NamespaceWriteParams
-            {
-                UpsertRows =
-                [
-                    new Row().Set("id", 1).Set("vector", new[] { 1.0f, 1.0f }),
-                    new Row().Set("id", 2).Set("vector", new[] { 2.0f, 2.0f }),
-                ],
-                DistanceMetric = DistanceMetric.CosineDistance,
-            }
-        );
-
-        var result = await _ns.Query(
-            new NamespaceQueryParams
-            {
-                RankBy = RankBy.Ann("vector", new[] { 1.1f, 1.1f }),
-                Limit = 10,
-            }
-        );
-        var rows = result.GetRows();
-
-        Assert.Equal(2, rows.Count);
-        Assert.Equal(1, rows[0].Get<int>("id"));
-    }
-}
+def test_query(tpuf_ns: namespace.Namespace):
+    tpuf_ns.write(
+      upsert_rows=[
+        {"id": 1, "vector": [1, 1]},
+        {"id": 2, "vector": [2, 2]}
+      ],
+      distance_metric="cosine_distance",
+    )
+    res = tpuf_ns.query(rank_by=("vector", "ANN", [1.1, 1.1]), limit=10)
+    assert res.rows[0].id == 1
 ```
 ```ruby
 # tpuf_test.rb
@@ -357,6 +307,127 @@ class TestTpuf < Minitest::Test
     assert_equal(res.rows.first.id, 1)
   end
 end
+```
+```rust
+// tests/tpuf_test.rs
+
+// Run with `cargo test --test tpuf_test`.
+// $ cargo add --dev futures rand tokio --features tokio/full
+
+use std::panic::{self, AssertUnwindSafe};
+
+use futures::FutureExt;
+use turbopuffer::ApiErrorKind;
+use turbopuffer::Client;
+use turbopuffer::Error;
+use turbopuffer::Namespace;
+use turbopuffer::types::{DistanceMetric, Id, RankBy, Row};
+
+type TestResult = Result<(), Box<dyn std::error::Error>>;
+
+/// Helper function that invokes a test function f with a turbopuffer namespace
+/// and ensures the namespace is deleted after f returns (even if it fails).
+async fn run_turbopuffer_test(f: impl AsyncFnOnce(Namespace) -> TestResult) -> TestResult {
+    let client = Client::builder()
+        .region("gcp-us-central1") // choose best region: https://turbopuffer.com/docs/regions
+        .build()?;
+
+    // Generate a random name for the test namespace.
+    let name = format!("test-{:032x}", rand::random::<u128>());
+    let namespace = client.namespace(&name);
+
+    // Catch panics from failed assertions so the namespace is still deleted.
+    let result = AssertUnwindSafe(f(namespace.clone())).catch_unwind().await;
+
+    // Delete the namespace after the test, even if the test fails.
+    match namespace.delete_all().send().await {
+        Ok(_) => {}
+        // If the namespace never got created, no cleanup is needed.
+        Err(Error::Api(err)) if err.kind() == ApiErrorKind::NotFound => {}
+        Err(err) => return Err(format!("unable to delete test namespace: {name}: {err}").into()),
+    }
+
+    result.unwrap_or_else(|payload| panic::resume_unwind(payload))
+}
+
+#[tokio::test]
+async fn test_query() -> TestResult {
+    run_turbopuffer_test(async |ns| {
+        ns.write()
+            .upsert_rows([Row::new(1).vector([1.1, 1.1])])
+            .distance_metric(DistanceMetric::CosineDistance)
+            .send()
+            .await?;
+        let res = ns
+            .query()
+            .rank_by(RankBy::ann("vector", [1.1, 1.1]))
+            .limit(10)
+            .send()
+            .await?;
+        assert_eq!(res.rows[0].id, Id::Int(1), "wrong row returned");
+        Ok(())
+    })
+    .await
+}
+
+#[tokio::test]
+async fn test_other() -> TestResult {
+    run_turbopuffer_test(async |_ns| {
+        // Your test code here.
+        Ok(())
+    })
+    .await
+}
+```
+```typescript
+// tpuf.test.ts
+
+// Run with `vitest ./tpuf.test.ts`.
+
+import { expect, test, beforeEach, afterEach, describe } from 'vitest'
+import { NotFoundError, Turbopuffer } from "@turbopuffer/turbopuffer";
+import { Namespace } from "@turbopuffer/turbopuffer/resources";
+import * as crypto from "crypto";
+
+const tpuf = new Turbopuffer({
+  region: "gcp-us-central1", // choose best region: https://turbopuffer.com/docs/regions
+});
+
+describe("Turbopuffer namespace tests", () => {
+  let ns: Namespace;
+
+  beforeEach(async () => {
+    const randomSuffix = crypto.randomBytes(16).toString("hex");
+    const nsName = `test-${randomSuffix}`;
+    ns = tpuf.namespace(nsName);
+  });
+
+  afterEach(async () => {
+    try {
+      await ns.deleteAll();
+    } catch (e: any) {
+      if (!(e instanceof NotFoundError)) {
+        // If the namespace never got created, no cleanup is needed.
+        throw e;
+      }
+    }
+  });
+
+  test("query test", async () => {
+    await ns.write({
+      upsert_rows: [
+        { id: 1, vector: [1, 1] },
+        { id: 2, vector: [2, 2] },
+      ],
+      distance_metric: "euclidean_squared",
+    });
+    const res = await ns.query({
+      rank_by: ["vector", "ANN", [1.1, 1.1]],
+      limit: 10,
+    });
+    expect(res.rows![0].id).toBe(1);
+  });
+});
 ```
 <!-- /multilang -->
 

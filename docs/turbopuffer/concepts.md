@@ -94,8 +94,8 @@ After data is committed to the WAL, it is asynchronously indexed by separate
 indexing nodes to enable efficient retrieval. This compute-compute separation
 means expensive indexing operations don't impact query performance. Unindexed
 data is still searched exhaustively for strongly consistent queries. Indexing
-progress can be tracked through the `unindexed_bytes` field in the
-[metadata endpoint](/docs/metadata). By default, attributes are indexed for
+progress can be tracked through the `unindexed_bytes` and `unindexed_rows`
+fields in the [metadata endpoint](/docs/metadata). By default, attributes are indexed for
 filtering and sorting, but you can disable indexing for attributes you don't
 need to filter on using the [schema](/docs/write#schema). See the
 [architecture documentation](/docs/architecture) for more details on the
@@ -140,7 +140,8 @@ isolation options.
 
 A namespace is an isolated container for documents and vectors in turbopuffer.
 Each namespace has its own prefix on object storage and is implicitly created
-when the first document is inserted.
+when the first document is inserted, or explicitly created with
+[`create_namespace`](/docs/write#param-create_namespace).
 
 We recommend creating one namespace per set of documents that are expected to be
 returned in the same query rather than using filters to separate data. Smaller

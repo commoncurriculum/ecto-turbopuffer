@@ -53,7 +53,7 @@ Use branching otherwise.
 
 ## Use cases
 
-- **Codebase indexing.** Embed a codebase once; branch per local checkout so only changed files need re-indexing.
+- **Codebase indexing.** Embed a codebase once; branch per local checkout so only changed files need reindexing.
 - **Test pipelines.** Branch a production namespace, run tests against real data, tear it down when done.
 - **Development environments.** Give each developer a sandbox of a shared dataset.
 - **Snapshots.** Capture the state of a changing namespace at a point in time, query the immutable snapshot many times, discard when finished.
@@ -78,53 +78,74 @@ curl https://gcp-us-central1.turbopuffer.com/v2/namespaces/branching-example-cur
   \"branch_from_namespace\": \"branching-example-source-curl\"
 }"
 ```
-```python
-import turbopuffer
+```cs
+// dotnet add package Turbopuffer
+using System;
+using System.Collections.Generic;
+using Turbopuffer;
+using Turbopuffer.Models.Namespaces;
 
-tpuf = turbopuffer.Turbopuffer(
-    region='gcp-us-central1', # choose best region: https://turbopuffer.com/docs/regions
-)
+using var tpuf = new TurbopufferClient
+{
+    // Pick the right region: https://turbopuffer.com/docs/regions
+    Region = "gcp-us-central1",
+};
 
-source = tpuf.namespace(f'branching-example-source-py')
-source.write(upsert_rows=[{'id': 1, 'title': 'Hello'}, {'id': 2, 'title': 'World'}])
+var source = tpuf.Namespace("branching-example-source-csharp");
+await source.Write(
+    new NamespaceWriteParams
+    {
+        UpsertRows =
+        [
+            new Row().Set("id", 1).Set("title", "Hello"),
+            new Row().Set("id", 2).Set("title", "World"),
+        ],
+    }
+);
 
-ns = tpuf.namespace(f'branching-example-py')
-ns.branch_from(source_namespace=f'branching-example-source-py')
-
-# Write to the branch
-ns.write(upsert_rows=[{'id': 3, 'title': 'New'}])
-
-# Branch has source data + new write
-result = ns.query(rank_by=('id', 'asc'), top_k=10, include_attributes=['title'])
-print(result.rows)
-
-# Source is unaffected
-result = source.query(rank_by=('id', 'asc'), top_k=10, include_attributes=['title'])
-print(result.rows)
-```
-```typescript
-import { Turbopuffer } from "@turbopuffer/turbopuffer";
-
-const tpuf = new Turbopuffer({
-  region: "gcp-us-central1", // choose best region: https://turbopuffer.com/docs/regions
-});
-
-const source = tpuf.namespace(`branching-example-source-ts`);
-await source.write({ upsert_rows: [{ id: 1, title: "Hello" }, { id: 2, title: "World" }] });
-
-const ns = tpuf.namespace(`branching-example-ts`);
-await ns.branchFrom({ source_namespace: `branching-example-source-ts` });
+var ns = tpuf.Namespace("branching-example-csharp");
+await ns.BranchFrom(
+    new NamespaceBranchFromParams
+    {
+        SourceNamespace = "branching-example-source-csharp",
+    }
+);
 
 // Write to the branch
-await ns.write({ upsert_rows: [{ id: 3, title: "New" }] });
+await ns.Write(
+    new NamespaceWriteParams
+    {
+        UpsertRows = [new Row().Set("id", 3).Set("title", "New")],
+    }
+);
 
 // Branch has source data + new write
-const branchResult = await ns.query({ rank_by: ["id", "asc"], top_k: 10, include_attributes: ["title"] });
-console.log(branchResult.rows);
+var branchResult = await ns.Query(
+    new NamespaceQueryParams
+    {
+        RankBy = RankBy.Attribute("id", RankByAttributeOrder.ASC),
+        Limit = 10,
+        IncludeAttributes = new List<string> { "title" },
+    }
+);
+foreach (var row in branchResult.GetRows())
+{
+    Console.WriteLine(row);
+}
 
 // Source is unaffected
-const sourceResult = await source.query({ rank_by: ["id", "asc"], top_k: 10, include_attributes: ["title"] });
-console.log(sourceResult.rows);
+var sourceResult = await source.Query(
+    new NamespaceQueryParams
+    {
+        RankBy = RankBy.Attribute("id", RankByAttributeOrder.ASC),
+        Limit = 10,
+        IncludeAttributes = new List<string> { "title" },
+    }
+);
+foreach (var row in sourceResult.GetRows())
+{
+    Console.WriteLine(row);
+}
 ```
 ```go
 package main
@@ -259,74 +280,29 @@ public class Branch {
   }
 }
 ```
-```cs
-// dotnet add package Turbopuffer
-using System;
-using System.Collections.Generic;
-using Turbopuffer;
-using Turbopuffer.Models.Namespaces;
+```python
+import turbopuffer
 
-using var tpuf = new TurbopufferClient
-{
-    // Pick the right region: https://turbopuffer.com/docs/regions
-    Region = "gcp-us-central1",
-};
+tpuf = turbopuffer.Turbopuffer(
+    region='gcp-us-central1', # choose best region: https://turbopuffer.com/docs/regions
+)
 
-var source = tpuf.Namespace("branching-example-source-csharp");
-await source.Write(
-    new NamespaceWriteParams
-    {
-        UpsertRows =
-        [
-            new Row().Set("id", 1).Set("title", "Hello"),
-            new Row().Set("id", 2).Set("title", "World"),
-        ],
-    }
-);
+source = tpuf.namespace(f'branching-example-source-py')
+source.write(upsert_rows=[{'id': 1, 'title': 'Hello'}, {'id': 2, 'title': 'World'}])
 
-var ns = tpuf.Namespace("branching-example-csharp");
-await ns.BranchFrom(
-    new NamespaceBranchFromParams
-    {
-        SourceNamespace = "branching-example-source-csharp",
-    }
-);
+ns = tpuf.namespace(f'branching-example-py')
+ns.branch_from(source_namespace=f'branching-example-source-py')
 
-// Write to the branch
-await ns.Write(
-    new NamespaceWriteParams
-    {
-        UpsertRows = [new Row().Set("id", 3).Set("title", "New")],
-    }
-);
+# Write to the branch
+ns.write(upsert_rows=[{'id': 3, 'title': 'New'}])
 
-// Branch has source data + new write
-var branchResult = await ns.Query(
-    new NamespaceQueryParams
-    {
-        RankBy = RankBy.Attribute("id", RankByAttributeOrder.ASC),
-        Limit = 10,
-        IncludeAttributes = new List<string> { "title" },
-    }
-);
-foreach (var row in branchResult.GetRows())
-{
-    Console.WriteLine(row);
-}
+# Branch has source data + new write
+result = ns.query(rank_by=('id', 'asc'), top_k=10, include_attributes=['title'])
+print(result.rows)
 
-// Source is unaffected
-var sourceResult = await source.Query(
-    new NamespaceQueryParams
-    {
-        RankBy = RankBy.Attribute("id", RankByAttributeOrder.ASC),
-        Limit = 10,
-        IncludeAttributes = new List<string> { "title" },
-    }
-);
-foreach (var row in sourceResult.GetRows())
-{
-    Console.WriteLine(row);
-}
+# Source is unaffected
+result = source.query(rank_by=('id', 'asc'), top_k=10, include_attributes=['title'])
+print(result.rows)
 ```
 ```ruby
 require "turbopuffer"
@@ -351,6 +327,84 @@ puts branch_result.rows
 # Source is unaffected
 source_result = source.query(rank_by: ["id", "asc"], top_k: 10, include_attributes: ["title"])
 puts source_result.rows
+```
+```rust
+use turbopuffer::Client;
+use turbopuffer::serde_json;
+use turbopuffer::types::{RankBy, RankByAttributeOrder, Row};
+
+#[tokio::main]
+async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    // The API key is read from TURBOPUFFER_API_KEY. Create one here: https://turbopuffer.com/dashboard
+    let client = Client::builder()
+        .region("gcp-us-central1") // choose best region: https://turbopuffer.com/docs/regions
+        .build()?;
+
+    let source = client.namespace("branching-example-source-rs");
+    source
+        .write()
+        .upsert_rows([
+            Row::new(1).insert("title", "Hello"),
+            Row::new(2).insert("title", "World"),
+        ])
+        .send()
+        .await?;
+
+    let ns = client.namespace("branching-example-rs");
+    ns.branch_from(source.id()).send().await?;
+
+    // Write to the branch
+    ns.write()
+        .upsert_rows([Row::new(3).insert("title", "New")])
+        .send()
+        .await?;
+
+    // Branch has source data + new write
+    let branch_result = ns
+        .query()
+        .rank_by(RankBy::attribute("id", RankByAttributeOrder::Asc))
+        .top_k(10)
+        .include_attributes(["title"])
+        .send()
+        .await?;
+    println!("{}", serde_json::to_string_pretty(&branch_result.rows)?);
+
+    // Source is unaffected
+    let source_result = source
+        .query()
+        .rank_by(RankBy::attribute("id", RankByAttributeOrder::Asc))
+        .top_k(10)
+        .include_attributes(["title"])
+        .send()
+        .await?;
+    println!("{}", serde_json::to_string_pretty(&source_result.rows)?);
+
+    Ok(())
+}
+```
+```typescript
+import { Turbopuffer } from "@turbopuffer/turbopuffer";
+
+const tpuf = new Turbopuffer({
+  region: "gcp-us-central1", // choose best region: https://turbopuffer.com/docs/regions
+});
+
+const source = tpuf.namespace(`branching-example-source-ts`);
+await source.write({ upsert_rows: [{ id: 1, title: "Hello" }, { id: 2, title: "World" }] });
+
+const ns = tpuf.namespace(`branching-example-ts`);
+await ns.branchFrom({ source_namespace: `branching-example-source-ts` });
+
+// Write to the branch
+await ns.write({ upsert_rows: [{ id: 3, title: "New" }] });
+
+// Branch has source data + new write
+const branchResult = await ns.query({ rank_by: ["id", "asc"], top_k: 10, include_attributes: ["title"] });
+console.log(branchResult.rows);
+
+// Source is unaffected
+const sourceResult = await source.query({ rank_by: ["id", "asc"], top_k: 10, include_attributes: ["title"] });
+console.log(sourceResult.rows);
 ```
 <!-- /multilang -->
 

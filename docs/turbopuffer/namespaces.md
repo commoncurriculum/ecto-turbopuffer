@@ -82,27 +82,21 @@ curl https://gcp-us-central1.turbopuffer.com/v1/namespaces?page_size=50 \
 # Unlike with the SDKs, you'll need to paginate through the results manually
 # using `next_cursor`.
 ```
-```python
-import turbopuffer
+```cs
+// dotnet add package Turbopuffer
+using System;
+using Turbopuffer;
 
-tpuf = turbopuffer.Turbopuffer(
-    region='gcp-us-central1', # choose best region: https://turbopuffer.com/docs/regions
-)
+using var tpuf = new TurbopufferClient
+{
+    // Pick the right region: https://turbopuffer.com/docs/regions
+    Region = "gcp-us-central1",
+};
 
-# List all namespaces
-namespaces = tpuf.namespaces()
-for namespace in namespaces:
-    print('Namespace', namespace.id)
-```
-```typescript
-import { Turbopuffer } from "@turbopuffer/turbopuffer";
-
-const tpuf = new Turbopuffer({
-  region: "gcp-us-central1", // choose best region: https://turbopuffer.com/docs/regions
-});
-
-for await (const namespace of tpuf.namespaces()) {
-  console.log("Namespace", namespace.id);
+var namespaces = await tpuf.Namespaces();
+await foreach (var ns in namespaces.Paginate())
+{
+    Console.WriteLine($"Namespace: {ns.ID}");
 }
 ```
 ```go
@@ -151,22 +145,17 @@ public class Namespaces {
   }
 }
 ```
-```cs
-// dotnet add package Turbopuffer
-using System;
-using Turbopuffer;
+```python
+import turbopuffer
 
-using var tpuf = new TurbopufferClient
-{
-    // Pick the right region: https://turbopuffer.com/docs/regions
-    Region = "gcp-us-central1",
-};
+tpuf = turbopuffer.Turbopuffer(
+    region='gcp-us-central1', # choose best region: https://turbopuffer.com/docs/regions
+)
 
-var namespaces = await tpuf.Namespaces();
-await foreach (var ns in namespaces.Paginate())
-{
-    Console.WriteLine($"Namespace: {ns.ID}");
-}
+# List all namespaces
+namespaces = tpuf.namespaces()
+for namespace in namespaces:
+    print('Namespace', namespace.id)
 ```
 ```ruby
 require "turbopuffer"
@@ -179,6 +168,38 @@ tpuf = Turbopuffer::Client.new(
 tpuf.namespaces.auto_paging_each do |namespace|
   puts "Namespace #{namespace.id}"
 end
+```
+```rust
+// $ cargo add turbopuffer tokio futures --features tokio/full
+use futures::TryStreamExt;
+use turbopuffer::Client;
+
+#[tokio::main]
+async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    // The API key is read from TURBOPUFFER_API_KEY. Create one here: https://turbopuffer.com/dashboard
+    let client = Client::builder()
+        .region("gcp-us-central1") // choose best region: https://turbopuffer.com/docs/regions
+        .build()?;
+
+    // List all namespaces
+    let mut namespaces = client.namespaces().into_stream();
+    while let Some(namespace) = namespaces.try_next().await? {
+        println!("Namespace {}", namespace.id);
+    }
+
+    Ok(())
+}
+```
+```typescript
+import { Turbopuffer } from "@turbopuffer/turbopuffer";
+
+const tpuf = new Turbopuffer({
+  region: "gcp-us-central1", // choose best region: https://turbopuffer.com/docs/regions
+});
+
+for await (const namespace of tpuf.namespaces()) {
+  console.log("Namespace", namespace.id);
+}
 ```
 <!-- /multilang -->
 

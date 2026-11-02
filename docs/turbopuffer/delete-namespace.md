@@ -20,27 +20,23 @@ curl https://gcp-us-central1.turbopuffer.com/v2/namespaces/delete-namespace-exam
 #   "status": "ok"
 # }
 ```
-```python
-import turbopuffer
+```cs
+// dotnet add package Turbopuffer
+using System;
+using Turbopuffer;
+using Turbopuffer.Models.Namespaces;
 
-tpuf = turbopuffer.Turbopuffer(
-    region='gcp-us-central1', # choose best region: https://turbopuffer.com/docs/regions
-)
+using var tpuf = new TurbopufferClient
+{
+    // Pick the right region: https://turbopuffer.com/docs/regions
+    Region = "gcp-us-central1",
+};
 
-ns = tpuf.namespace(f'delete-namespace-example-py')
-# If an error occurs, this call raises a turbopuffer.APIError if a retry was not successful.
-ns.delete_all()
-```
-```typescript
-import { Turbopuffer } from "@turbopuffer/turbopuffer";
+var ns = tpuf.Namespace("delete-namespace-example-csharp");
 
-const tpuf = new Turbopuffer({
-  region: "gcp-us-central1", // choose best region: https://turbopuffer.com/docs/regions
-});
-
-const ns = tpuf.namespace(`delete-namespace-example-ts`);
-
-await ns.deleteAll();
+// If an error occurs, this call raises a TurbopufferApiException if
+// a retry was not successful.
+await ns.DeleteAll(new NamespaceDeleteAllParams());
 ```
 ```go
 package main
@@ -90,23 +86,16 @@ public class DeleteNamespace {
   }
 }
 ```
-```cs
-// dotnet add package Turbopuffer
-using System;
-using Turbopuffer;
-using Turbopuffer.Models.Namespaces;
+```python
+import turbopuffer
 
-using var tpuf = new TurbopufferClient
-{
-    // Pick the right region: https://turbopuffer.com/docs/regions
-    Region = "gcp-us-central1",
-};
+tpuf = turbopuffer.Turbopuffer(
+    region='gcp-us-central1', # choose best region: https://turbopuffer.com/docs/regions
+)
 
-var ns = tpuf.Namespace("delete-namespace-example-csharp");
-
-// If an error occurs, this call raises a TurbopufferApiException if
-// a retry was not successful.
-await ns.DeleteAll(new NamespaceDeleteAllParams());
+ns = tpuf.namespace(f'delete-namespace-example-py')
+# If an error occurs, this call raises a turbopuffer.APIError if a retry was not successful.
+ns.delete_all()
 ```
 ```ruby
 require "turbopuffer"
@@ -118,6 +107,34 @@ tpuf = Turbopuffer::Client.new(
 ns = tpuf.namespace("delete-namespace-example-rb")
 # If an error occurs, this call raises a Turbopuffer::Errors::APIError if a retry was not successful.
 ns.delete_all
+```
+```rust
+use turbopuffer::Client;
+
+#[tokio::main]
+async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    // The API key is read from TURBOPUFFER_API_KEY. Create one here: https://turbopuffer.com/dashboard
+    let client = Client::builder()
+        .region("gcp-us-central1") // choose best region: https://turbopuffer.com/docs/regions
+        .build()?;
+
+    let ns = client.namespace("delete-namespace-example-rs");
+    // If an error occurs, this call returns a turbopuffer::Error once retries are exhausted.
+    ns.delete_all().send().await?;
+
+    Ok(())
+}
+```
+```typescript
+import { Turbopuffer } from "@turbopuffer/turbopuffer";
+
+const tpuf = new Turbopuffer({
+  region: "gcp-us-central1", // choose best region: https://turbopuffer.com/docs/regions
+});
+
+const ns = tpuf.namespace(`delete-namespace-example-ts`);
+
+await ns.deleteAll();
 ```
 <!-- /multilang -->
 

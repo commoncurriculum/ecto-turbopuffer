@@ -13,52 +13,47 @@ for a more efficient server-side copy (follow with
 documents).
 
 <!-- multilang -->
-```python
-import turbopuffer
+```cs
+// dotnet add package Turbopuffer
+using System;
+using System.Text.Json;
+using Turbopuffer;
+using Turbopuffer.Models.Namespaces;
 
-tpuf = turbopuffer.Turbopuffer(
-    region='gcp-us-central1', # choose best region: https://turbopuffer.com/docs/regions
-)
+using var tpuf = new TurbopufferClient
+{
+    // Pick the right region: https://turbopuffer.com/docs/regions
+    Region = "gcp-us-central1",
+};
 
-ns = tpuf.namespace(f'export-example-py')
+var ns = tpuf.Namespace("export-example-csharp");
 
-last_id = None
-while True:
-    result = ns.query(
-        rank_by=('id', 'asc'),
-        limit=10_000,
-        filters=('id', 'Gt', last_id) if last_id is not None else turbopuffer.omit,
-    )
+JsonElement? lastId = null;
+while (true)
+{
+    var queryParams = new NamespaceQueryParams
+    {
+        RankBy = RankBy.Attribute("id", RankByAttributeOrder.ASC),
+        Limit = 10_000,
+    };
+    if (lastId != null)
+    {
+        queryParams = queryParams with { Filters = Filter.Gt("id", lastId) };
+    }
+    var result = await ns.Query(queryParams);
+    var rows = result.GetRows();
 
-    # Do something with the page of results.
-    print(result)
+    // Do something with the page of results.
+    foreach (var row in rows)
+    {
+        Console.WriteLine(row);
+    }
 
-    if len(result.rows) < 10_000:
-        break
-    last_id = result.rows[-1].id
-```
-```typescript
-import { Turbopuffer } from "@turbopuffer/turbopuffer";
-
-const tpuf = new Turbopuffer({
-  region: "gcp-us-central1", // choose best region: https://turbopuffer.com/docs/regions
-});
-
-const ns = tpuf.namespace(`export-example-ts`);
-
-let lastId: string | number | null = null;
-while (true) {
-  const result = await ns.query({
-    rank_by: ["id", "asc"],
-    limit: 10_000,
-    filters: lastId !== null ? ["id", "Gt", lastId] : undefined,
-  });
-
-  // Do something with the page of results.
-  console.log(result.rows);
-
-  if (result.rows!.length < 10_000) break;
-  lastId = result.rows![result.rows!.length - 1].id;
+    if (rows.Count < 10_000)
+    {
+        break;
+    }
+    lastId = rows[^1]["id"];
 }
 ```
 ```go
@@ -151,48 +146,29 @@ public class Export {
   }
 }
 ```
-```cs
-// dotnet add package Turbopuffer
-using System;
-using System.Text.Json;
-using Turbopuffer;
-using Turbopuffer.Models.Namespaces;
+```python
+import turbopuffer
 
-using var tpuf = new TurbopufferClient
-{
-    // Pick the right region: https://turbopuffer.com/docs/regions
-    Region = "gcp-us-central1",
-};
+tpuf = turbopuffer.Turbopuffer(
+    region='gcp-us-central1', # choose best region: https://turbopuffer.com/docs/regions
+)
 
-var ns = tpuf.Namespace("export-example-csharp");
+ns = tpuf.namespace(f'export-example-py')
 
-JsonElement? lastId = null;
-while (true)
-{
-    var queryParams = new NamespaceQueryParams
-    {
-        RankBy = RankBy.Attribute("id", RankByAttributeOrder.ASC),
-        Limit = 10_000,
-    };
-    if (lastId != null)
-    {
-        queryParams = queryParams with { Filters = Filter.Gt("id", lastId) };
-    }
-    var result = await ns.Query(queryParams);
-    var rows = result.GetRows();
+last_id = None
+while True:
+    result = ns.query(
+        rank_by=('id', 'asc'),
+        limit=10_000,
+        filters=('id', 'Gt', last_id) if last_id is not None else turbopuffer.omit,
+    )
 
-    // Do something with the page of results.
-    foreach (var row in rows)
-    {
-        Console.WriteLine(row);
-    }
+    # Do something with the page of results.
+    print(result)
 
-    if (rows.Count < 10_000)
-    {
-        break;
-    }
-    lastId = rows[^1]["id"];
-}
+    if len(result.rows) < 10_000:
+        break
+    last_id = result.rows[-1].id
 ```
 ```ruby
 require "turbopuffer"
@@ -218,6 +194,67 @@ loop do
   break if result.rows.length < 10_000
   last_id = result.rows.last.id
 end
+```
+```rust
+use turbopuffer::Client;
+use turbopuffer::serde_json;
+use turbopuffer::types::{Filter, RankBy, RankByAttributeOrder};
+
+#[tokio::main]
+async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    // The API key is read from TURBOPUFFER_API_KEY. Create one here: https://turbopuffer.com/dashboard
+    let client = Client::builder()
+        .region("gcp-us-central1") // choose best region: https://turbopuffer.com/docs/regions
+        .build()?;
+
+    let ns = client.namespace("export-example-rs");
+
+    let mut last_id = None;
+    loop {
+        let mut query = ns
+            .query()
+            .rank_by(RankBy::attribute("id", RankByAttributeOrder::Asc))
+            .limit(10_000);
+        if let Some(last_id) = last_id {
+            query = query.filters(Filter::gt("id", last_id));
+        }
+        let result = query.send().await?;
+
+        // Do something with the page of results.
+        println!("{}", serde_json::to_string_pretty(&result.rows)?);
+
+        if result.rows.len() < 10_000 {
+            break;
+        }
+        last_id = result.rows.last().map(|row| row.id.clone());
+    }
+
+    Ok(())
+}
+```
+```typescript
+import { Turbopuffer } from "@turbopuffer/turbopuffer";
+
+const tpuf = new Turbopuffer({
+  region: "gcp-us-central1", // choose best region: https://turbopuffer.com/docs/regions
+});
+
+const ns = tpuf.namespace(`export-example-ts`);
+
+let lastId: string | number | null = null;
+while (true) {
+  const result = await ns.query({
+    rank_by: ["id", "asc"],
+    limit: 10_000,
+    filters: lastId !== null ? ["id", "Gt", lastId] : undefined,
+  });
+
+  // Do something with the page of results.
+  console.log(result.rows);
+
+  if (result.rows!.length < 10_000) break;
+  lastId = result.rows![result.rows!.length - 1].id;
+}
 ```
 <!-- /multilang -->
 

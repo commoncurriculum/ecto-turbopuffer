@@ -33,29 +33,22 @@ curl https://gcp-us-central1.turbopuffer.com/v1/namespaces/warm-cache-example-cu
 # Response payload
 # { "status": "ACCEPTED", "message": "cache warm hint accepted" }
 ```
-```python
-import turbopuffer
+```cs
+// dotnet add package Turbopuffer
+using System;
+using Turbopuffer;
+using Turbopuffer.Models.Namespaces;
 
-tpuf = turbopuffer.Turbopuffer(
-    region='gcp-us-central1', # choose best region: https://turbopuffer.com/docs/regions
-)
+using var tpuf = new TurbopufferClient
+{
+    // Pick the right region: https://turbopuffer.com/docs/regions
+    Region = "gcp-us-central1",
+};
 
-ns = tpuf.namespace(f'warm-cache-example-py')
+var ns = tpuf.Namespace("warm-cache-example-csharp");
 
-print(ns.hint_cache_warm())
-# NamespaceHintCacheWarmResponse(status='ACCEPTED', message='cache warm hint accepted')
-```
-```typescript
-import { Turbopuffer } from "@turbopuffer/turbopuffer";
-
-const tpuf = new Turbopuffer({
-  region: "gcp-us-central1", // choose best region: https://turbopuffer.com/docs/regions
-});
-
-const ns = tpuf.namespace(`warm-cache-example-ts`);
-
-console.log(await ns.hintCacheWarm());
-// { "status": "ACCEPTED", "message": "cache warm hint accepted" }
+Console.WriteLine(await ns.HintCacheWarm(new NamespaceHintCacheWarmParams()));
+// {"status": "ACCEPTED", "message": "cache warm hint accepted"}
 ```
 ```go
 package main
@@ -107,22 +100,17 @@ public class WarmCache {
   }
 }
 ```
-```cs
-// dotnet add package Turbopuffer
-using System;
-using Turbopuffer;
-using Turbopuffer.Models.Namespaces;
+```python
+import turbopuffer
 
-using var tpuf = new TurbopufferClient
-{
-    // Pick the right region: https://turbopuffer.com/docs/regions
-    Region = "gcp-us-central1",
-};
+tpuf = turbopuffer.Turbopuffer(
+    region='gcp-us-central1', # choose best region: https://turbopuffer.com/docs/regions
+)
 
-var ns = tpuf.Namespace("warm-cache-example-csharp");
+ns = tpuf.namespace(f'warm-cache-example-py')
 
-Console.WriteLine(await ns.HintCacheWarm(new NamespaceHintCacheWarmParams()));
-// {"status": "ACCEPTED", "message": "cache warm hint accepted"}
+print(ns.hint_cache_warm())
+# NamespaceHintCacheWarmResponse(status='ACCEPTED', message='cache warm hint accepted')
 ```
 ```ruby
 require "turbopuffer"
@@ -135,6 +123,41 @@ ns = tpuf.namespace("warm-cache-example-rb")
 
 puts ns.hint_cache_warm
 # {status: :ACCEPTED, message: "cache warm hint accepted"}
+```
+```rust
+use turbopuffer::Client;
+use turbopuffer::serde_json;
+
+#[tokio::main]
+async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    // The API key is read from TURBOPUFFER_API_KEY. Create one here: https://turbopuffer.com/dashboard
+    let client = Client::builder()
+        .region("gcp-us-central1") // choose best region: https://turbopuffer.com/docs/regions
+        .build()?;
+
+    let ns = client.namespace("warm-cache-example-rs");
+
+    let result = ns.hint_cache_warm().send().await?;
+    println!("{}", serde_json::to_string_pretty(&result)?);
+    // {
+    //   "status": "ACCEPTED",
+    //   "message": "cache warm hint accepted"
+    // }
+
+    Ok(())
+}
+```
+```typescript
+import { Turbopuffer } from "@turbopuffer/turbopuffer";
+
+const tpuf = new Turbopuffer({
+  region: "gcp-us-central1", // choose best region: https://turbopuffer.com/docs/regions
+});
+
+const ns = tpuf.namespace(`warm-cache-example-ts`);
+
+console.log(await ns.hintCacheWarm());
+// { "status": "ACCEPTED", "message": "cache warm hint accepted" }
 ```
 <!-- /multilang -->
 
