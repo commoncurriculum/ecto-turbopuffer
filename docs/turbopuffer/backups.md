@@ -52,138 +52,94 @@ namespaces matching a prefix. It appends the date to each backup namespace name
 and automatically cleans up backups older than 7 days:
 
 <!-- multilang -->
-```python
-# /// script
-# requires-python = ">=3.10"
-# dependencies = ["turbopuffer"]
-# ///
-
-import os
-import time
-
-import turbopuffer
-
-# Configuration
-SOURCE_REGION = "gcp-us-central1"
-BACKUP_REGION = "gcp-us-west1"
-SOURCE_PREFIX = "fts-"  # Back up all namespaces starting with "fts-"
-BACKUP_PREFIX = "backup-"  # Backup namespaces will be "backup-{name}-{date}"
-RETENTION_DAYS = 7
-
-source_client = turbopuffer.Turbopuffer(
-    api_key=os.getenv("TURBOPUFFER_API_KEY"), region=SOURCE_REGION
-)
-backup_client = turbopuffer.Turbopuffer(
-    api_key=os.getenv("TURBOPUFFER_API_KEY"), region=BACKUP_REGION
-)
-
-timestamp = int(time.time())  # Unix epoch seconds
-start_time = time.time()
-
-# Step 1: Back up each namespace matching the source prefix
-print("Starting backups...")
-namespaces = list(source_client.namespaces(prefix=SOURCE_PREFIX))
-
-for ns in namespaces:
-    backup_name = f"{BACKUP_PREFIX}{ns.id}-{timestamp:010d}"
-    print(f"  Backing up: {ns.id}")
-    backup_ns = backup_client.namespace(backup_name)
-
-    backup_ns.copy_from(
-        source_namespace=ns.id,
-        source_region=SOURCE_REGION,
-        # if backing up to a different organization, include source_api_key:
-        # source_api_key="<source-org-api-key>",
-    )
-
-# Step 2: Delete old backups beyond the retention period (after successful backup)
-print("Cleaning up old backups...")
-cutoff = int(time.time()) - RETENTION_DAYS * 86400
-deleted = 0
-
-for ns in backup_client.namespaces(prefix=BACKUP_PREFIX):
-    # Safety check: only delete namespaces that match our backup prefix
-    assert len(BACKUP_PREFIX) > 0 and ns.id.startswith(
-        BACKUP_PREFIX
-    ), f"Refusing to delete namespace that doesn't match backup prefix: {ns.id}"
-
-    # Extract timestamp from backup namespace name (e.g., "backup-prod-users-1234567890")
-    if len(ns.id) >= 10:
-        try:
-            backup_time = int(ns.id[-10:])
-            if backup_time < cutoff:
-                print(f"  Deleting: {ns.id}")
-                backup_client.namespace(ns.id).delete_all()
-                deleted += 1
-        except ValueError:
-            print(
-                f"  Skipping {ns.id}: invalid timestamp format",
-                file=__import__("sys").stderr,
-            )
-
-print(
-    f"Done: backed up {len(namespaces)} namespaces, deleted {deleted} old backups in {time.time() - start_time:.1f}s"
-)
-```
-```typescript
-import { Turbopuffer } from "@turbopuffer/turbopuffer";
+```cs
+// dotnet add package Turbopuffer
+using System;
+using Turbopuffer;
+using Turbopuffer.Models;
+using Turbopuffer.Models.Namespaces;
 
 // Configuration
-const SOURCE_REGION = "gcp-us-central1";
-const BACKUP_REGION = "gcp-us-west1";
-const SOURCE_PREFIX = "fts-"; // Back up all namespaces starting with "fts-"
-const BACKUP_PREFIX = "backup-"; // Backup namespaces will be "backup-{name}-{date}"
-const RETENTION_DAYS = 7;
+const string SOURCE_REGION = "gcp-us-central1";
+const string BACKUP_REGION = "gcp-us-west1";
+const string SOURCE_PREFIX = "fts-"; // Back up all namespaces starting with "fts-"
+const string BACKUP_PREFIX = "backup-"; // Backup namespaces will be "backup-{name}-{date}"
+const int RETENTION_DAYS = 7;
 
-const sourceClient = new Turbopuffer({ region: SOURCE_REGION });
-const backupClient = new Turbopuffer({ region: BACKUP_REGION });
+using var sourceClient = new TurbopufferClient { Region = SOURCE_REGION };
+using var backupClient = new TurbopufferClient { Region = BACKUP_REGION };
 
-const timestamp = Math.floor(Date.now() / 1000); // Unix epoch seconds
-const startTime = Date.now();
+var timestamp = DateTimeOffset.UtcNow.ToUnixTimeSeconds(); // Unix epoch seconds
+var startTime = DateTimeOffset.UtcNow;
 
 // Step 1: Back up each namespace matching the source prefix
-console.log("Starting backups...");
-const namespaces: string[] = [];
+Console.WriteLine("Starting backups...");
+int namespaceCount = 0;
 
-for await (const ns of sourceClient.namespaces({ prefix: SOURCE_PREFIX })) {
-  namespaces.push(ns.id);
-  const backupName = `${BACKUP_PREFIX}${ns.id}-${String(timestamp).padStart(10, "0")}`;
-  console.log(`  Backing up: ${ns.id}`);
+var namespaces = await sourceClient.Namespaces(
+    new ClientNamespacesParams { Prefix = SOURCE_PREFIX }
+);
 
-  const backupNs = backupClient.namespace(backupName);
-  await backupNs.copyFrom({
-    source_namespace: ns.id,
-    source_region: SOURCE_REGION,
-    // if backing up to a different organization, include source_api_key:
-    // source_api_key: "<source-org-api-key>",
-  });
+await foreach (var ns in namespaces.Paginate())
+{
+    namespaceCount++;
+    var backupName = $"{BACKUP_PREFIX}{ns.ID}-{timestamp:D10}";
+    Console.WriteLine($"  Backing up: {ns.ID}");
+
+    var backupNs = backupClient.Namespace(backupName);
+    await backupNs.CopyFrom(
+        new NamespaceCopyFromParams
+        {
+            SourceNamespace = ns.ID,
+            SourceRegion = SOURCE_REGION,
+            // if backing up to a different organization, include source_api_key:
+            // SourceApiKey = "<source-org-api-key>",
+        }
+    );
 }
 
 // Step 2: Delete old backups beyond the retention period (after successful backup)
-console.log("Cleaning up old backups...");
-const cutoff = Math.floor(Date.now() / 1000) - RETENTION_DAYS * 86400;
-let deleted = 0;
+Console.WriteLine("Cleaning up old backups...");
+var cutoff = DateTimeOffset.UtcNow.ToUnixTimeSeconds() - RETENTION_DAYS * 86400L;
+int deleted = 0;
 
-for await (const ns of backupClient.namespaces({ prefix: BACKUP_PREFIX })) {
-  // Safety check: only delete namespaces that match our backup prefix
-  if (BACKUP_PREFIX.length === 0 || !ns.id.startsWith(BACKUP_PREFIX)) {
-    throw new Error(`Refusing to delete namespace that doesn't match backup prefix: ${ns.id}`);
-  }
+var backups = await backupClient.Namespaces(
+    new ClientNamespacesParams { Prefix = BACKUP_PREFIX }
+);
 
-  // Extract timestamp from backup namespace name (e.g., "backup-prod-users-1234567890")
-  if (ns.id.length >= 10) {
-    const backupTime = parseInt(ns.id.slice(-10), 10);
-    if (!isNaN(backupTime) && backupTime < cutoff) {
-      console.log(`  Deleting: ${ns.id}`);
-      await backupClient.namespace(ns.id).deleteAll();
-      deleted++;
+await foreach (var ns in backups.Paginate())
+{
+    // Safety check: only delete namespaces that match our backup prefix
+    if (BACKUP_PREFIX.Length == 0 || !ns.ID.StartsWith(BACKUP_PREFIX))
+    {
+        throw new InvalidOperationException(
+            $"Refusing to delete namespace that doesn't match backup prefix: {ns.ID}"
+        );
     }
-  }
+
+    // Extract timestamp from backup namespace name (e.g., "backup-prod-users-1234567890")
+    var name = ns.ID;
+    if (name.Length >= 10)
+    {
+        if (long.TryParse(name.Substring(name.Length - 10), out var backupTime))
+        {
+            if (backupTime < cutoff)
+            {
+                Console.WriteLine($"  Deleting: {ns.ID}");
+                await backupClient.Namespace(ns.ID).DeleteAll(new NamespaceDeleteAllParams());
+                deleted++;
+            }
+        }
+        else
+        {
+            Console.Error.WriteLine($"  Skipping {ns.ID}: invalid timestamp format");
+        }
+    }
 }
 
-const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
-console.log(
-  `Done: backed up ${namespaces.length} namespaces, deleted ${deleted} old backups in ${elapsed}s`
+var elapsed = (DateTimeOffset.UtcNow - startTime).TotalSeconds;
+Console.WriteLine(
+    $"Done: backed up {namespaceCount} namespaces, deleted {deleted} old backups in {elapsed:F1}s"
 );
 ```
 ```go
@@ -381,95 +337,78 @@ public class BackupNamespaces {
   }
 }
 ```
-```cs
-// dotnet add package Turbopuffer
-using System;
-using Turbopuffer;
-using Turbopuffer.Models;
-using Turbopuffer.Models.Namespaces;
+```python
+# /// script
+# requires-python = ">=3.10"
+# dependencies = ["turbopuffer"]
+# ///
 
-// Configuration
-const string SOURCE_REGION = "gcp-us-central1";
-const string BACKUP_REGION = "gcp-us-west1";
-const string SOURCE_PREFIX = "fts-"; // Back up all namespaces starting with "fts-"
-const string BACKUP_PREFIX = "backup-"; // Backup namespaces will be "backup-{name}-{date}"
-const int RETENTION_DAYS = 7;
+import os
+import time
 
-using var sourceClient = new TurbopufferClient { Region = SOURCE_REGION };
-using var backupClient = new TurbopufferClient { Region = BACKUP_REGION };
+import turbopuffer
 
-var timestamp = DateTimeOffset.UtcNow.ToUnixTimeSeconds(); // Unix epoch seconds
-var startTime = DateTimeOffset.UtcNow;
+# Configuration
+SOURCE_REGION = "gcp-us-central1"
+BACKUP_REGION = "gcp-us-west1"
+SOURCE_PREFIX = "fts-"  # Back up all namespaces starting with "fts-"
+BACKUP_PREFIX = "backup-"  # Backup namespaces will be "backup-{name}-{date}"
+RETENTION_DAYS = 7
 
-// Step 1: Back up each namespace matching the source prefix
-Console.WriteLine("Starting backups...");
-int namespaceCount = 0;
+source_client = turbopuffer.Turbopuffer(
+    api_key=os.getenv("TURBOPUFFER_API_KEY"), region=SOURCE_REGION
+)
+backup_client = turbopuffer.Turbopuffer(
+    api_key=os.getenv("TURBOPUFFER_API_KEY"), region=BACKUP_REGION
+)
 
-var namespaces = await sourceClient.Namespaces(
-    new ClientNamespacesParams { Prefix = SOURCE_PREFIX }
-);
+timestamp = int(time.time())  # Unix epoch seconds
+start_time = time.time()
 
-await foreach (var ns in namespaces.Paginate())
-{
-    namespaceCount++;
-    var backupName = $"{BACKUP_PREFIX}{ns.ID}-{timestamp:D10}";
-    Console.WriteLine($"  Backing up: {ns.ID}");
+# Step 1: Back up each namespace matching the source prefix
+print("Starting backups...")
+namespaces = list(source_client.namespaces(prefix=SOURCE_PREFIX))
 
-    var backupNs = backupClient.Namespace(backupName);
-    await backupNs.CopyFrom(
-        new NamespaceCopyFromParams
-        {
-            SourceNamespace = ns.ID,
-            SourceRegion = SOURCE_REGION,
-            // if backing up to a different organization, include source_api_key:
-            // SourceApiKey = "<source-org-api-key>",
-        }
-    );
-}
+for ns in namespaces:
+    backup_name = f"{BACKUP_PREFIX}{ns.id}-{timestamp:010d}"
+    print(f"  Backing up: {ns.id}")
+    backup_ns = backup_client.namespace(backup_name)
 
-// Step 2: Delete old backups beyond the retention period (after successful backup)
-Console.WriteLine("Cleaning up old backups...");
-var cutoff = DateTimeOffset.UtcNow.ToUnixTimeSeconds() - RETENTION_DAYS * 86400L;
-int deleted = 0;
+    backup_ns.copy_from(
+        source_namespace=ns.id,
+        source_region=SOURCE_REGION,
+        # if backing up to a different organization, include source_api_key:
+        # source_api_key="<source-org-api-key>",
+    )
 
-var backups = await backupClient.Namespaces(
-    new ClientNamespacesParams { Prefix = BACKUP_PREFIX }
-);
+# Step 2: Delete old backups beyond the retention period (after successful backup)
+print("Cleaning up old backups...")
+cutoff = int(time.time()) - RETENTION_DAYS * 86400
+deleted = 0
 
-await foreach (var ns in backups.Paginate())
-{
-    // Safety check: only delete namespaces that match our backup prefix
-    if (BACKUP_PREFIX.Length == 0 || !ns.ID.StartsWith(BACKUP_PREFIX))
-    {
-        throw new InvalidOperationException(
-            $"Refusing to delete namespace that doesn't match backup prefix: {ns.ID}"
-        );
-    }
+for ns in backup_client.namespaces(prefix=BACKUP_PREFIX):
+    # Safety check: only delete namespaces that match our backup prefix
+    assert len(BACKUP_PREFIX) > 0 and ns.id.startswith(
+        BACKUP_PREFIX
+    ), f"Refusing to delete namespace that doesn't match backup prefix: {ns.id}"
 
-    // Extract timestamp from backup namespace name (e.g., "backup-prod-users-1234567890")
-    var name = ns.ID;
-    if (name.Length >= 10)
-    {
-        if (long.TryParse(name.Substring(name.Length - 10), out var backupTime))
-        {
-            if (backupTime < cutoff)
-            {
-                Console.WriteLine($"  Deleting: {ns.ID}");
-                await backupClient.Namespace(ns.ID).DeleteAll(new NamespaceDeleteAllParams());
-                deleted++;
-            }
-        }
-        else
-        {
-            Console.Error.WriteLine($"  Skipping {ns.ID}: invalid timestamp format");
-        }
-    }
-}
+    # Extract timestamp from backup namespace name (e.g., "backup-prod-users-1234567890")
+    if len(ns.id) >= 10:
+        try:
+            backup_time = int(ns.id[-10:])
+            if backup_time < cutoff:
+                print(f"  Deleting: {ns.id}")
+                backup_client.namespace(ns.id).delete_all()
+                deleted += 1
+        except ValueError:
+            print(
+                f"  Skipping {ns.id}: invalid timestamp format",
+                file=__import__("sys").stderr,
+            )
 
-var elapsed = (DateTimeOffset.UtcNow - startTime).TotalSeconds;
-Console.WriteLine(
-    $"Done: backed up {namespaceCount} namespaces, deleted {deleted} old backups in {elapsed:F1}s"
-);
+print(
+    f"Done: backed up {len(namespaces)} namespaces, deleted {deleted} old backups in {time.time() - start_time:.1f}s"
+)
 ```
 ```ruby
 require "turbopuffer"
@@ -532,6 +471,156 @@ end
 elapsed = (Time.now - start_time).round(1)
 puts "Done: backed up #{namespace_count} namespaces, deleted #{deleted} old backups in #{elapsed}s"
 ```
+```rust
+// $ cargo add turbopuffer tokio futures --features tokio/full
+use std::time::{Instant, SystemTime, UNIX_EPOCH};
+
+use futures::TryStreamExt;
+use turbopuffer::Client;
+
+// Configuration
+const SOURCE_REGION: &str = "gcp-us-central1";
+const BACKUP_REGION: &str = "gcp-us-west1";
+const SOURCE_PREFIX: &str = "fts-"; // Back up all namespaces starting with "fts-"
+const BACKUP_PREFIX: &str = "backup-"; // Backup namespaces will be "backup-{name}-{date}"
+const RETENTION_DAYS: u64 = 7;
+
+#[tokio::main]
+async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    // The API key is read from TURBOPUFFER_API_KEY. Create one here: https://turbopuffer.com/dashboard
+    let source_client = Client::builder().region(SOURCE_REGION).build()?;
+    let backup_client = Client::builder().region(BACKUP_REGION).build()?;
+
+    let timestamp = SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs(); // Unix epoch seconds
+    let start_time = Instant::now();
+
+    // Step 1: Back up each namespace matching the source prefix
+    println!("Starting backups...");
+    let mut namespace_count = 0;
+
+    let mut namespaces = source_client
+        .namespaces()
+        .prefix(SOURCE_PREFIX)
+        .into_stream();
+    while let Some(ns) = namespaces.try_next().await? {
+        namespace_count += 1;
+        let backup_name = format!("{BACKUP_PREFIX}{}-{timestamp:010}", ns.id);
+        println!("  Backing up: {}", ns.id);
+
+        backup_client
+            .namespace(backup_name)
+            .copy_from(&ns.id)
+            .source_region(SOURCE_REGION)
+            // if backing up to a different organization, include source_api_key:
+            // .source_api_key("<source-org-api-key>")
+            .send()
+            .await?;
+    }
+
+    // Step 2: Delete old backups beyond the retention period (after successful backup)
+    println!("Cleaning up old backups...");
+    let cutoff = timestamp - RETENTION_DAYS * 86400;
+    let mut deleted = 0;
+
+    let mut backups = backup_client
+        .namespaces()
+        .prefix(BACKUP_PREFIX)
+        .into_stream();
+    while let Some(ns) = backups.try_next().await? {
+        // Safety check: only delete namespaces that match our backup prefix
+        if BACKUP_PREFIX.is_empty() || !ns.id.starts_with(BACKUP_PREFIX) {
+            return Err(format!(
+                "Refusing to delete namespace that doesn't match backup prefix: {}",
+                ns.id
+            )
+            .into());
+        }
+
+        // Extract timestamp from backup namespace name (e.g., "backup-prod-users-1234567890")
+        let Some(backup_time) = ns
+            .id
+            .rsplit_once('-')
+            .and_then(|(_, ts)| ts.parse::<u64>().ok())
+        else {
+            eprintln!("  Skipping {}: invalid timestamp format", ns.id);
+            continue;
+        };
+        if backup_time < cutoff {
+            println!("  Deleting: {}", ns.id);
+            backup_client.namespace(&ns.id).delete_all().send().await?;
+            deleted += 1;
+        }
+    }
+
+    let elapsed = start_time.elapsed().as_secs_f64();
+    println!(
+        "Done: backed up {namespace_count} namespaces, deleted {deleted} old backups in {elapsed:.1}s"
+    );
+
+    Ok(())
+}
+```
+```typescript
+import { Turbopuffer } from "@turbopuffer/turbopuffer";
+
+// Configuration
+const SOURCE_REGION = "gcp-us-central1";
+const BACKUP_REGION = "gcp-us-west1";
+const SOURCE_PREFIX = "fts-"; // Back up all namespaces starting with "fts-"
+const BACKUP_PREFIX = "backup-"; // Backup namespaces will be "backup-{name}-{date}"
+const RETENTION_DAYS = 7;
+
+const sourceClient = new Turbopuffer({ region: SOURCE_REGION });
+const backupClient = new Turbopuffer({ region: BACKUP_REGION });
+
+const timestamp = Math.floor(Date.now() / 1000); // Unix epoch seconds
+const startTime = Date.now();
+
+// Step 1: Back up each namespace matching the source prefix
+console.log("Starting backups...");
+const namespaces: string[] = [];
+
+for await (const ns of sourceClient.namespaces({ prefix: SOURCE_PREFIX })) {
+  namespaces.push(ns.id);
+  const backupName = `${BACKUP_PREFIX}${ns.id}-${String(timestamp).padStart(10, "0")}`;
+  console.log(`  Backing up: ${ns.id}`);
+
+  const backupNs = backupClient.namespace(backupName);
+  await backupNs.copyFrom({
+    source_namespace: ns.id,
+    source_region: SOURCE_REGION,
+    // if backing up to a different organization, include source_api_key:
+    // source_api_key: "<source-org-api-key>",
+  });
+}
+
+// Step 2: Delete old backups beyond the retention period (after successful backup)
+console.log("Cleaning up old backups...");
+const cutoff = Math.floor(Date.now() / 1000) - RETENTION_DAYS * 86400;
+let deleted = 0;
+
+for await (const ns of backupClient.namespaces({ prefix: BACKUP_PREFIX })) {
+  // Safety check: only delete namespaces that match our backup prefix
+  if (BACKUP_PREFIX.length === 0 || !ns.id.startsWith(BACKUP_PREFIX)) {
+    throw new Error(`Refusing to delete namespace that doesn't match backup prefix: ${ns.id}`);
+  }
+
+  // Extract timestamp from backup namespace name (e.g., "backup-prod-users-1234567890")
+  if (ns.id.length >= 10) {
+    const backupTime = parseInt(ns.id.slice(-10), 10);
+    if (!isNaN(backupTime) && backupTime < cutoff) {
+      console.log(`  Deleting: ${ns.id}`);
+      await backupClient.namespace(ns.id).deleteAll();
+      deleted++;
+    }
+  }
+}
+
+const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
+console.log(
+  `Done: backed up ${namespaces.length} namespaces, deleted ${deleted} old backups in ${elapsed}s`
+);
+```
 <!-- /multilang -->
 
 See [Limits](/docs/limits) for copy throughput estimates.
@@ -543,95 +632,74 @@ to the namespace in the backup region directly, or copy it to a new namespace
 in your preferred region as shown below:
 
 <!-- multilang -->
-```python
-# /// script
-# requires-python = ">=3.10"
-# dependencies = ["turbopuffer"]
-# ///
-
-import os
-import time
-
-import turbopuffer
-
-# Configuration
-SOURCE_REGION = "gcp-us-central1"
-BACKUP_REGION = "gcp-us-west1"
-BACKUP_PREFIX = "backup-"
-
-source_client = turbopuffer.Turbopuffer(
-    api_key=os.getenv("TURBOPUFFER_API_KEY"), region=SOURCE_REGION
-)
-backup_client = turbopuffer.Turbopuffer(
-    api_key=os.getenv("TURBOPUFFER_API_KEY"), region=BACKUP_REGION
-)
-
-# Find latest backup timestamp (last 10 chars = Unix epoch seconds)
-backups = list(backup_client.namespaces(prefix=BACKUP_PREFIX))
-timestamps: set[int] = set()
-for ns in backups:
-    if len(ns.id) >= 10:
-        try:
-            timestamps.add(int(ns.id[-10:]))
-        except ValueError:
-            pass
-latest = max(timestamps)
-
-print(f"Recovering from backup: {latest}")
-start_time = time.time()
-recovered = 0
-
-latest_suffix = f"{latest:010d}"
-for ns in backups:
-    if not ns.id.endswith(latest_suffix):
-        continue
-    original_name = ns.id[len(BACKUP_PREFIX) : -11]  # -11 for "-" + 10 digits
-    recovered_name = f"recovered-py-{original_name}"
-    print(f"  {ns.id} -> {recovered_name}")
-    source_client.namespace(recovered_name).copy_from(
-        source_namespace=ns.id, source_region=BACKUP_REGION
-    )
-    recovered += 1
-
-print(f"Done: recovered {recovered} namespaces in {time.time() - start_time:.1f}s")
-```
-```typescript
-import { Turbopuffer } from "@turbopuffer/turbopuffer";
+```cs
+// dotnet add package Turbopuffer
+using System;
+using System.Collections.Generic;
+using Turbopuffer;
+using Turbopuffer.Models;
+using Turbopuffer.Models.Namespaces;
 
 // Configuration
-const SOURCE_REGION = "gcp-us-central1";
-const BACKUP_REGION = "gcp-us-west1";
-const BACKUP_PREFIX = "backup-";
+const string SOURCE_REGION = "gcp-us-central1";
+const string BACKUP_REGION = "gcp-us-west1";
+const string BACKUP_PREFIX = "backup-";
 
-const sourceClient = new Turbopuffer({ region: SOURCE_REGION });
-const backupClient = new Turbopuffer({ region: BACKUP_REGION });
+using var sourceClient = new TurbopufferClient { Region = SOURCE_REGION };
+using var backupClient = new TurbopufferClient { Region = BACKUP_REGION };
 
-// Find latest backup timestamp (last 10 chars = Unix epoch seconds)
-const backups: { id: string }[] = [];
-for await (const ns of backupClient.namespaces({ prefix: BACKUP_PREFIX })) backups.push(ns);
-const timestamps = backups
-  .map((ns) => (ns.id.length >= 10 ? parseInt(ns.id.slice(-10), 10) : NaN))
-  .filter((t) => !isNaN(t));
-const latest = Math.max(...timestamps);
+// Find the latest backup timestamp (last 10 chars = Unix epoch seconds)
+var backupTimestamps = new SortedSet<long>();
 
-console.log(`Recovering from backup: ${latest}`);
-const startTime = Date.now();
-let recovered = 0;
-
-const latestSuffix = String(latest).padStart(10, "0");
-for (const ns of backups) {
-  if (!ns.id.endsWith(latestSuffix)) continue;
-  const originalName = ns.id.slice(BACKUP_PREFIX.length, -11); // -11 for "-" + 10 digits
-  const recoveredName = `recovered-mts-${originalName}`;
-  console.log(`  ${ns.id} -> ${recoveredName}`);
-  await sourceClient.namespace(recoveredName).copyFrom({
-    source_namespace: ns.id,
-    source_region: BACKUP_REGION,
-  });
-  recovered++;
+var backupsForTimestamps = await backupClient.Namespaces(
+    new ClientNamespacesParams { Prefix = BACKUP_PREFIX }
+);
+await foreach (var ns in backupsForTimestamps.Paginate())
+{
+    var name = ns.ID;
+    if (name.Length >= 10)
+    {
+        if (long.TryParse(name.Substring(name.Length - 10), out var ts))
+        {
+            backupTimestamps.Add(ts);
+        }
+        // Skip invalid timestamps
+    }
 }
 
-console.log(`Done: recovered ${recovered} namespaces in ${((Date.now() - startTime) / 1000).toFixed(1)}s`);
+var latestTimestamp = backupTimestamps.Max;
+var latestSuffix = $"{latestTimestamp:D10}";
+Console.WriteLine($"Recovering from backup timestamp: {latestTimestamp}");
+
+var startTime = DateTimeOffset.UtcNow;
+int recovered = 0;
+
+var backups = await backupClient.Namespaces(
+    new ClientNamespacesParams { Prefix = BACKUP_PREFIX }
+);
+await foreach (var ns in backups.Paginate())
+{
+    if (!ns.ID.EndsWith(latestSuffix)) continue;
+    var originalName = ns.ID.Substring(
+        BACKUP_PREFIX.Length,
+        ns.ID.Length - 11 - BACKUP_PREFIX.Length
+    ); // -11 for "-" + 10 digits
+    var recoveredName = "recovered-csharp-" + originalName + "";
+    Console.WriteLine($"  {ns.ID} -> {recoveredName}");
+    await sourceClient
+        .Namespace(recoveredName)
+        .CopyFrom(
+            new NamespaceCopyFromParams
+            {
+                SourceNamespace = ns.ID,
+                SourceRegion = BACKUP_REGION,
+            }
+        );
+    recovered++;
+}
+
+var elapsed = (DateTimeOffset.UtcNow - startTime).TotalSeconds;
+Console.WriteLine($"Done: recovered {recovered} namespaces in {elapsed:F1}s");
 ```
 ```go
 package main
@@ -769,74 +837,57 @@ public class RecoverNamespace {
   }
 }
 ```
-```cs
-// dotnet add package Turbopuffer
-using System;
-using System.Collections.Generic;
-using Turbopuffer;
-using Turbopuffer.Models;
-using Turbopuffer.Models.Namespaces;
+```python
+# /// script
+# requires-python = ">=3.10"
+# dependencies = ["turbopuffer"]
+# ///
 
-// Configuration
-const string SOURCE_REGION = "gcp-us-central1";
-const string BACKUP_REGION = "gcp-us-west1";
-const string BACKUP_PREFIX = "backup-";
+import os
+import time
 
-using var sourceClient = new TurbopufferClient { Region = SOURCE_REGION };
-using var backupClient = new TurbopufferClient { Region = BACKUP_REGION };
+import turbopuffer
 
-// Find the latest backup timestamp (last 10 chars = Unix epoch seconds)
-var backupTimestamps = new SortedSet<long>();
+# Configuration
+SOURCE_REGION = "gcp-us-central1"
+BACKUP_REGION = "gcp-us-west1"
+BACKUP_PREFIX = "backup-"
 
-var backupsForTimestamps = await backupClient.Namespaces(
-    new ClientNamespacesParams { Prefix = BACKUP_PREFIX }
-);
-await foreach (var ns in backupsForTimestamps.Paginate())
-{
-    var name = ns.ID;
-    if (name.Length >= 10)
-    {
-        if (long.TryParse(name.Substring(name.Length - 10), out var ts))
-        {
-            backupTimestamps.Add(ts);
-        }
-        // Skip invalid timestamps
-    }
-}
+source_client = turbopuffer.Turbopuffer(
+    api_key=os.getenv("TURBOPUFFER_API_KEY"), region=SOURCE_REGION
+)
+backup_client = turbopuffer.Turbopuffer(
+    api_key=os.getenv("TURBOPUFFER_API_KEY"), region=BACKUP_REGION
+)
 
-var latestTimestamp = backupTimestamps.Max;
-var latestSuffix = $"{latestTimestamp:D10}";
-Console.WriteLine($"Recovering from backup timestamp: {latestTimestamp}");
+# Find latest backup timestamp (last 10 chars = Unix epoch seconds)
+backups = list(backup_client.namespaces(prefix=BACKUP_PREFIX))
+timestamps: set[int] = set()
+for ns in backups:
+    if len(ns.id) >= 10:
+        try:
+            timestamps.add(int(ns.id[-10:]))
+        except ValueError:
+            pass
+latest = max(timestamps)
 
-var startTime = DateTimeOffset.UtcNow;
-int recovered = 0;
+print(f"Recovering from backup: {latest}")
+start_time = time.time()
+recovered = 0
 
-var backups = await backupClient.Namespaces(
-    new ClientNamespacesParams { Prefix = BACKUP_PREFIX }
-);
-await foreach (var ns in backups.Paginate())
-{
-    if (!ns.ID.EndsWith(latestSuffix)) continue;
-    var originalName = ns.ID.Substring(
-        BACKUP_PREFIX.Length,
-        ns.ID.Length - 11 - BACKUP_PREFIX.Length
-    ); // -11 for "-" + 10 digits
-    var recoveredName = "recovered-csharp-" + originalName + "";
-    Console.WriteLine($"  {ns.ID} -> {recoveredName}");
-    await sourceClient
-        .Namespace(recoveredName)
-        .CopyFrom(
-            new NamespaceCopyFromParams
-            {
-                SourceNamespace = ns.ID,
-                SourceRegion = BACKUP_REGION,
-            }
-        );
-    recovered++;
-}
+latest_suffix = f"{latest:010d}"
+for ns in backups:
+    if not ns.id.endswith(latest_suffix):
+        continue
+    original_name = ns.id[len(BACKUP_PREFIX) : -11]  # -11 for "-" + 10 digits
+    recovered_name = f"recovered-py-{original_name}"
+    print(f"  {ns.id} -> {recovered_name}")
+    source_client.namespace(recovered_name).copy_from(
+        source_namespace=ns.id, source_region=BACKUP_REGION
+    )
+    recovered += 1
 
-var elapsed = (DateTimeOffset.UtcNow - startTime).TotalSeconds;
-Console.WriteLine($"Done: recovered {recovered} namespaces in {elapsed:F1}s");
+print(f"Done: recovered {recovered} namespaces in {time.time() - start_time:.1f}s")
 ```
 ```ruby
 require "turbopuffer"
@@ -881,6 +932,106 @@ backup_client.namespaces(prefix: BACKUP_PREFIX).auto_paging_each do |ns|
 end
 
 puts "Done: recovered #{recovered} namespaces in #{(Time.now - start_time).round(1)}s"
+```
+```rust
+// $ cargo add turbopuffer tokio futures --features tokio/full
+use std::time::Instant;
+
+use futures::TryStreamExt;
+use turbopuffer::Client;
+
+// Configuration
+const SOURCE_REGION: &str = "gcp-us-central1";
+const BACKUP_REGION: &str = "gcp-us-west1";
+const BACKUP_PREFIX: &str = "backup-";
+
+#[tokio::main]
+async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    // The API key is read from TURBOPUFFER_API_KEY. Create one here: https://turbopuffer.com/dashboard
+    let source_client = Client::builder().region(SOURCE_REGION).build()?;
+    let backup_client = Client::builder().region(BACKUP_REGION).build()?;
+
+    // Find latest backup timestamp (the part after the last "-", in Unix epoch seconds)
+    let backups: Vec<_> = backup_client
+        .namespaces()
+        .prefix(BACKUP_PREFIX)
+        .into_stream()
+        .try_collect()
+        .await?;
+    let latest = backups
+        .iter()
+        .filter_map(|ns| ns.id.rsplit_once('-')?.1.parse::<u64>().ok())
+        .max()
+        .ok_or("no backups found")?;
+
+    println!("Recovering from backup: {latest}");
+    let start_time = Instant::now();
+    let mut recovered = 0;
+
+    let latest_suffix = format!("-{latest:010}");
+    for ns in &backups {
+        // e.g. "backup-prod-users-1234567890" -> "prod-users"
+        let Some(original_name) = ns
+            .id
+            .strip_prefix(BACKUP_PREFIX)
+            .and_then(|name| name.strip_suffix(&latest_suffix))
+        else {
+            continue;
+        };
+        let recovered_name = format!("recovered-rs-{original_name}");
+        println!("  {} -> {recovered_name}", ns.id);
+        source_client
+            .namespace(recovered_name)
+            .copy_from(&ns.id)
+            .source_region(BACKUP_REGION)
+            .send()
+            .await?;
+        recovered += 1;
+    }
+
+    let elapsed = start_time.elapsed().as_secs_f64();
+    println!("Done: recovered {recovered} namespaces in {elapsed:.1}s");
+
+    Ok(())
+}
+```
+```typescript
+import { Turbopuffer } from "@turbopuffer/turbopuffer";
+
+// Configuration
+const SOURCE_REGION = "gcp-us-central1";
+const BACKUP_REGION = "gcp-us-west1";
+const BACKUP_PREFIX = "backup-";
+
+const sourceClient = new Turbopuffer({ region: SOURCE_REGION });
+const backupClient = new Turbopuffer({ region: BACKUP_REGION });
+
+// Find latest backup timestamp (last 10 chars = Unix epoch seconds)
+const backups: { id: string }[] = [];
+for await (const ns of backupClient.namespaces({ prefix: BACKUP_PREFIX })) backups.push(ns);
+const timestamps = backups
+  .map((ns) => (ns.id.length >= 10 ? parseInt(ns.id.slice(-10), 10) : NaN))
+  .filter((t) => !isNaN(t));
+const latest = Math.max(...timestamps);
+
+console.log(`Recovering from backup: ${latest}`);
+const startTime = Date.now();
+let recovered = 0;
+
+const latestSuffix = String(latest).padStart(10, "0");
+for (const ns of backups) {
+  if (!ns.id.endsWith(latestSuffix)) continue;
+  const originalName = ns.id.slice(BACKUP_PREFIX.length, -11); // -11 for "-" + 10 digits
+  const recoveredName = `recovered-mts-${originalName}`;
+  console.log(`  ${ns.id} -> ${recoveredName}`);
+  await sourceClient.namespace(recoveredName).copyFrom({
+    source_namespace: ns.id,
+    source_region: BACKUP_REGION,
+  });
+  recovered++;
+}
+
+console.log(`Done: recovered ${recovered} namespaces in ${((Date.now() - startTime) / 1000).toFixed(1)}s`);
 ```
 <!-- /multilang -->
 

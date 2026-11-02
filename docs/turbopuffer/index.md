@@ -55,13 +55,6 @@ Using object storage as the sole source of truth enables operations like
 in constant time regardless of size, with fully independent reads and writes
 afterward.
 
-turbopuffer is currently focused on first-stage retrieval to efficiently narrow
-millions of documents (trillions of tokens) down to tens or hundreds documents
-(thousands of tokens). While it may have fewer features than traditional search
-engines, this streamlined approach enables higher quality, more maintainable
-search applications that you can customize in your preferred programming
-language. See [Hybrid Search](/docs/hybrid-search) to get started.
-
 To get started with turbopuffer, see the [quickstart guide](/docs/quickstart).
 
 

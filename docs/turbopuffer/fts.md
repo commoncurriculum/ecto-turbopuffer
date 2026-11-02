@@ -73,122 +73,96 @@ curl https://gcp-us-central1.turbopuffer.com/v2/namespaces/fts-basic-example-cur
 # To combine with vector search, see:
 # https://turbopuffer.com/docs/hybrid-search
 ```
-```python
-# $ pip install turbopuffer
-import turbopuffer
-import os
+```cs
+// dotnet add package Turbopuffer
+using System;
+using System.Collections.Generic;
+using Turbopuffer;
+using Turbopuffer.Models.Namespaces;
 
-tpuf = turbopuffer.Turbopuffer(
-    # API tokens are created in the dashboard: https://turbopuffer.com/dashboard
-    api_key=os.getenv("TURBOPUFFER_API_KEY"),
-    region="gcp-us-central1", # choose best region: https://turbopuffer.com/docs/regions
-)
+using var tpuf = new TurbopufferClient
+{
+    // API tokens are created in the dashboard: https://turbopuffer.com/dashboard
+    // Loaded from TURBOPUFFER_API_KEY env var by default. Override if necessary:
+    // ApiKey = "...",
 
-ns = tpuf.namespace(f'fts-basic-example-py')
-ns.write(
-    upsert_rows=[
+    // Pick the right region: https://turbopuffer.com/docs/regions
+    Region = "gcp-us-central1",
+};
+
+var ns = tpuf.Namespace("fts-basic-example-csharp");
+
+await ns.Write(
+    new NamespaceWriteParams
+    {
+        UpsertRows =
+        [
+            new Row()
+                .Set("id", 1)
+                .Set(
+                    "content",
+                    "turbopuffer is a fast search engine with FTS, filtering, and vector search support"
+                ),
+            new Row()
+                .Set("id", 2)
+                .Set(
+                    "content",
+                    "turbopuffer can store billions and billions of documents cheaper than any other search engine"
+                ),
+            new Row()
+                .Set("id", 3)
+                .Set(
+                    "content",
+                    "turbopuffer will support many more types of queries as it evolves. turbopuffer will only get faster."
+                ),
+        ],
+        Schema = new Dictionary<string, AttributeSchemaConfig>
         {
-            'id': 1,
-            'content': 'turbopuffer is a fast search engine with FTS, filtering, and vector search support'
+            ["content"] = new AttributeSchemaConfig
+            {
+                Type = "string",
+                // Enable BM25 with default settings
+                // For all config options, see https://turbopuffer.com/docs/write#schema
+                FullTextSearch = true,
+            },
         },
-        {
-            'id': 2,
-            'content': 'turbopuffer can store billions and billions of documents cheaper than any other search engine'
-        },
-        {
-            'id': 3,
-            'content': 'turbopuffer will support many more types of queries as it evolves. turbopuffer will only get faster.'
-        }
-    ],
-    schema={
-        'content': {
-            'type': 'string',
-            # Enable BM25 with default settings
-            # For all config options, see https://turbopuffer.com/docs/write#schema
-            'full_text_search': True
-        }
     }
-)
+);
 
-# Basic FTS search.
-results = ns.query(
-    rank_by=('content', 'BM25', 'turbopuffer'),
-    limit=10,
-    include_attributes=['content']
-)
-# [3, 1, 2] is the default BM25 ranking based on document length and
-# term frequency
-print(results)
-
-# Simple phrase matching filter, to limit results to documents that contain the
-# terms "search" and "engine"
-results = ns.query(
-    rank_by=('content', 'BM25', 'turbopuffer'),
-    filters=('content', 'ContainsAllTokens', 'search engine'),
-    limit=10,
-    include_attributes=['content']
-)
-# [1, 2] (same as above, but without document 3)
-print(results)
-
-# To combine with vector search, see:
-# https://turbopuffer.com/docs/hybrid-search
-```
-```typescript
-// $ npm install @turbopuffer/turbopuffer
-import { Turbopuffer } from "@turbopuffer/turbopuffer";
-
-const tpuf = new Turbopuffer({
-  // API tokens are created in the dashboard: https://turbopuffer.com/dashboard
-  apiKey: process.env.TURBOPUFFER_API_KEY,
-  region: "gcp-us-central1", // choose best region: https://turbopuffer.com/docs/regions
-});
-
-const ns = tpuf.namespace(`fts-basic-example-ts`);
-
-await ns.write({
-  upsert_rows: [
+// Basic FTS search.
+var queryResult = await ns.Query(
+    new NamespaceQueryParams
     {
-      id: 1,
-      content: "turbopuffer is a fast search engine with FTS, filtering, and vector search support",
-    },
-    {
-      id: 2,
-      content: "turbopuffer can store billions and billions of documents cheaper than any other search engine",
-    },
-    {
-      id: 3,
-      content: "turbopuffer will support many more types of queries as it evolves. turbopuffer will only get faster.",
-    },
-  ],
-  schema: {
-    content: {
-      type: "string",
-      // Enable BM25 with default settings
-      // For all config options, see https://turbopuffer.com/docs/write#schema
-      full_text_search: true,
-    },
-  },
-});
+        RankBy = RankByText.BM25("content", "turbopuffer"),
+        Limit = 10,
+        IncludeAttributes = new List<string> { "content" },
+    }
+);
+// [3, 1, 2] is the default BM25 ranking based on document length and
+// term frequency
+foreach (var row in queryResult.GetRows())
+{
+    Console.WriteLine(row);
+}
 
-// Basic FTS search, to combine with vector search, see https://turbopuffer.com/docs/hybrid-search
-let results = await ns.query({
-  rank_by: ["content", "BM25", "turbopuffer"],
-  limit: 10,
-  include_attributes: ["content"],
-});
-// [3, 1, 2] is the default BM25 ranking based on document length and term frequency
-console.log(results);
-
-// Simple phrase matching filter, to limit results to documents that contain the terms "search" and "engine"
-results = await ns.query({
-  rank_by: ["content", "BM25", "turbopuffer"],
-  limit: 10,
-  filters: ["content", "ContainsAllTokens", "search engine"],
-  include_attributes: ["content"],
-});
+// Simple phrase matching filter, to limit results to documents that contain the
+// terms "search" and "engine"
+queryResult = await ns.Query(
+    new NamespaceQueryParams
+    {
+        RankBy = RankByText.BM25("content", "turbopuffer"),
+        Filters = Filter.ContainsAllTokens("content", "search engine"),
+        Limit = 10,
+        IncludeAttributes = new List<string> { "content" },
+    }
+);
 // [1, 2] (same as above, but without document 3)
-console.log(results);
+foreach (var row in queryResult.GetRows())
+{
+    Console.WriteLine(row);
+}
+// To combine with vector search, see:
+// https://turbopuffer.com/docs/hybrid-search
 ```
 ```go
 package main
@@ -229,13 +203,13 @@ func main() {
 					"content": "turbopuffer will support many more types of queries as it evolves. turbopuffer will only get faster.",
 				},
 			},
-			Schema: map[string]turbopuffer.AttributeSchemaConfigParam{
-				"content": {
+			Schema: map[string]turbopuffer.AttributeSchemaParam{
+				"content": {AttributeSchemaConfig: &turbopuffer.AttributeSchemaConfigParam{
 					Type: "string",
 					// Enable BM25 with default settings
 					// For all config options, see https://turbopuffer.com/docs/write#schema
 					FullTextSearch: &turbopuffer.FullTextSearchConfigParam{},
-				},
+				}},
 			},
 		},
 	)
@@ -385,96 +359,66 @@ public class FtsBasic {
   }
 }
 ```
-```cs
-// dotnet add package Turbopuffer
-using System;
-using System.Collections.Generic;
-using Turbopuffer;
-using Turbopuffer.Models.Namespaces;
+```python
+# $ pip install turbopuffer
+import turbopuffer
+import os
 
-using var tpuf = new TurbopufferClient
-{
-    // API tokens are created in the dashboard: https://turbopuffer.com/dashboard
-    // Loaded from TURBOPUFFER_API_KEY env var by default. Override if necessary:
-    // ApiKey = "...",
+tpuf = turbopuffer.Turbopuffer(
+    # API tokens are created in the dashboard: https://turbopuffer.com/dashboard
+    api_key=os.getenv("TURBOPUFFER_API_KEY"),
+    region="gcp-us-central1", # choose best region: https://turbopuffer.com/docs/regions
+)
 
-    // Pick the right region: https://turbopuffer.com/docs/regions
-    Region = "gcp-us-central1",
-};
-
-var ns = tpuf.Namespace("fts-basic-example-csharp");
-
-await ns.Write(
-    new NamespaceWriteParams
-    {
-        UpsertRows =
-        [
-            new Row()
-                .Set("id", 1)
-                .Set(
-                    "content",
-                    "turbopuffer is a fast search engine with FTS, filtering, and vector search support"
-                ),
-            new Row()
-                .Set("id", 2)
-                .Set(
-                    "content",
-                    "turbopuffer can store billions and billions of documents cheaper than any other search engine"
-                ),
-            new Row()
-                .Set("id", 3)
-                .Set(
-                    "content",
-                    "turbopuffer will support many more types of queries as it evolves. turbopuffer will only get faster."
-                ),
-        ],
-        Schema = new Dictionary<string, AttributeSchemaConfig>
+ns = tpuf.namespace(f'fts-basic-example-py')
+ns.write(
+    upsert_rows=[
         {
-            ["content"] = new AttributeSchemaConfig
-            {
-                Type = "string",
-                // Enable BM25 with default settings
-                // For all config options, see https://turbopuffer.com/docs/write#schema
-                FullTextSearch = true,
-            },
+            'id': 1,
+            'content': 'turbopuffer is a fast search engine with FTS, filtering, and vector search support'
         },
+        {
+            'id': 2,
+            'content': 'turbopuffer can store billions and billions of documents cheaper than any other search engine'
+        },
+        {
+            'id': 3,
+            'content': 'turbopuffer will support many more types of queries as it evolves. turbopuffer will only get faster.'
+        }
+    ],
+    schema={
+        'content': {
+            'type': 'string',
+            # Enable BM25 with default settings
+            # For all config options, see https://turbopuffer.com/docs/write#schema
+            'full_text_search': True
+        }
     }
-);
+)
 
-// Basic FTS search.
-var queryResult = await ns.Query(
-    new NamespaceQueryParams
-    {
-        RankBy = RankByText.BM25("content", "turbopuffer"),
-        Limit = 10,
-        IncludeAttributes = new List<string> { "content" },
-    }
-);
-// [3, 1, 2] is the default BM25 ranking based on document length and
-// term frequency
-foreach (var row in queryResult.GetRows())
-{
-    Console.WriteLine(row);
-}
+# Basic FTS search.
+results = ns.query(
+    rank_by=('content', 'BM25', 'turbopuffer'),
+    limit=10,
+    include_attributes=['content']
+)
+# [3, 1, 2] is the default BM25 ranking based on document length and
+# term frequency
+print(results)
 
-// Simple phrase matching filter, to limit results to documents that contain the
-// terms "search" and "engine"
-queryResult = await ns.Query(
-    new NamespaceQueryParams
-    {
-        RankBy = RankByText.BM25("content", "turbopuffer"),
-        Filters = Filter.ContainsAllTokens("content", "search engine"),
-        Limit = 10,
-        IncludeAttributes = new List<string> { "content" },
-    }
-);
-// [1, 2] (same as above, but without document 3)
-foreach (var row in queryResult.GetRows())
-{
-    Console.WriteLine(row);
-}
-// To combine with vector search, see:
-// https://turbopuffer.com/docs/hybrid-search
+# Simple phrase matching filter, to limit results to documents that contain the
+# terms "search" and "engine"
+results = ns.query(
+    rank_by=('content', 'BM25', 'turbopuffer'),
+    filters=('content', 'ContainsAllTokens', 'search engine'),
+    limit=10,
+    include_attributes=['content']
+)
+# [1, 2] (same as above, but without document 3)
+print(results)
+
+# To combine with vector search, see:
+# https://turbopuffer.com/docs/hybrid-search
 ```
 ```ruby
 # $ gem install turbopuffer
@@ -535,6 +479,133 @@ puts results.rows
 
 # To combine with vector search, see:
 # https://turbopuffer.com/docs/hybrid-search
+```
+```rust
+// $ cargo add turbopuffer tokio --features tokio/full
+use turbopuffer::Client;
+use turbopuffer::serde_json;
+use turbopuffer::types::{AttributeSchemaConfig, Filter, RankBy, Row};
+
+#[tokio::main]
+async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    // The API key is read from TURBOPUFFER_API_KEY. Create one here: https://turbopuffer.com/dashboard
+    let client = Client::builder()
+        .region("gcp-us-central1") // choose best region: https://turbopuffer.com/docs/regions
+        .build()?;
+
+    let ns = client.namespace("fts-basic-example-rs");
+
+    ns.write()
+        .upsert_rows([
+            Row::new(1).insert(
+                "content",
+                "turbopuffer is a fast search engine with FTS, filtering, and vector search support",
+            ),
+            Row::new(2).insert(
+                "content",
+                "turbopuffer can store billions and billions of documents cheaper than any other search engine",
+            ),
+            Row::new(3).insert(
+                "content",
+                "turbopuffer will support many more types of queries as it evolves. turbopuffer will only get faster.",
+            ),
+        ])
+        .schema([(
+            "content",
+            AttributeSchemaConfig::new("string")
+                // Enable BM25 with default settings
+                // For all config options, see https://turbopuffer.com/docs/write#schema
+                .full_text_search(true),
+        )])
+        .send()
+        .await?;
+
+    // Basic FTS search.
+    let result = ns
+        .query()
+        .rank_by(RankBy::bm25("content", "turbopuffer"))
+        .limit(10)
+        .include_attributes(["content"])
+        .send()
+        .await?;
+    // [3, 1, 2] is the default BM25 ranking based on document length and
+    // term frequency
+    println!("{}", serde_json::to_string_pretty(&result.rows)?);
+
+    // Simple phrase matching filter, to limit results to documents that contain the
+    // terms "search" and "engine"
+    let result = ns
+        .query()
+        .rank_by(RankBy::bm25("content", "turbopuffer"))
+        .filters(Filter::contains_all_tokens("content", "search engine"))
+        .limit(10)
+        .include_attributes(["content"])
+        .send()
+        .await?;
+    // [1, 2] (same as above, but without document 3)
+    println!("{}", serde_json::to_string_pretty(&result.rows)?);
+
+    // To combine with vector search, see:
+    // https://turbopuffer.com/docs/hybrid-search
+
+    Ok(())
+}
+```
+```typescript
+// $ npm install @turbopuffer/turbopuffer
+import { Turbopuffer } from "@turbopuffer/turbopuffer";
+
+const tpuf = new Turbopuffer({
+  // API tokens are created in the dashboard: https://turbopuffer.com/dashboard
+  apiKey: process.env.TURBOPUFFER_API_KEY,
+  region: "gcp-us-central1", // choose best region: https://turbopuffer.com/docs/regions
+});
+
+const ns = tpuf.namespace(`fts-basic-example-ts`);
+
+await ns.write({
+  upsert_rows: [
+    {
+      id: 1,
+      content: "turbopuffer is a fast search engine with FTS, filtering, and vector search support",
+    },
+    {
+      id: 2,
+      content: "turbopuffer can store billions and billions of documents cheaper than any other search engine",
+    },
+    {
+      id: 3,
+      content: "turbopuffer will support many more types of queries as it evolves. turbopuffer will only get faster.",
+    },
+  ],
+  schema: {
+    content: {
+      type: "string",
+      // Enable BM25 with default settings
+      // For all config options, see https://turbopuffer.com/docs/write#schema
+      full_text_search: true,
+    },
+  },
+});
+
+// Basic FTS search, to combine with vector search, see https://turbopuffer.com/docs/hybrid-search
+let results = await ns.query({
+  rank_by: ["content", "BM25", "turbopuffer"],
+  limit: 10,
+  include_attributes: ["content"],
+});
+// [3, 1, 2] is the default BM25 ranking based on document length and term frequency
+console.log(results);
+
+// Simple phrase matching filter, to limit results to documents that contain the terms "search" and "engine"
+results = await ns.query({
+  rank_by: ["content", "BM25", "turbopuffer"],
+  limit: 10,
+  filters: ["content", "ContainsAllTokens", "search engine"],
+  include_attributes: ["content"],
+});
+// [1, 2] (same as above, but without document 3)
+console.log(results);
 ```
 <!-- /multilang -->
 
@@ -629,189 +700,108 @@ curl https://gcp-us-central1.turbopuffer.com/v2/namespaces/fts-advanced-example-
 
 # To combine with vector search, see: https://turbopuffer.com/docs/hybrid-search
 ```
-```python
-import turbopuffer
+```cs
+// dotnet add package Turbopuffer
+using System;
+using System.Collections.Generic;
+using Turbopuffer;
+using Turbopuffer.Models.Namespaces;
 
-tpuf = turbopuffer.Turbopuffer(
-    region='gcp-us-central1', # choose best region: https://turbopuffer.com/docs/regions
-)
+using var tpuf = new TurbopufferClient
+{
+    // Pick the right region: https://turbopuffer.com/docs/regions
+    Region = "gcp-us-central1",
+};
 
-ns = tpuf.namespace(f'fts-advanced-example-py')
+var ns = tpuf.Namespace("fts-advanced-example-csharp");
 
-# Write some documents with a rich set of attributes.
-ns.write(
-    upsert_rows=[
+await ns.Write(
+    new NamespaceWriteParams
+    {
+        UpsertRows =
+        [
+            new Row()
+                .Set("id", 1)
+                .Set("title", "Getting Started with Python")
+                .Set("content", "Learn Python basics including variables, functions, and classes")
+                .Set("tags", new[] { "python", "programming", "beginner" })
+                .Set("language", "en")
+                .Set("publish_date", 1709251200),
+            new Row()
+                .Set("id", 2)
+                .Set("title", "Advanced TypeScript Tips")
+                .Set("content", "Discover advanced TypeScript features and type system tricks")
+                .Set("tags", new[] { "typescript", "javascript", "advanced" })
+                .Set("language", "en")
+                .Set("publish_date", 1709337600),
+            new Row()
+                .Set("id", 3)
+                .Set("title", "Python vs JavaScript")
+                .Set("content", "Compare Python and JavaScript for web development")
+                .Set("tags", new[] { "python", "javascript", "comparison" })
+                .Set("language", "en")
+                .Set("publish_date", 1709424000),
+        ],
+        Schema = new Dictionary<string, AttributeSchemaConfig>
         {
-            'id': 1,
-            'title': 'Getting Started with Python',
-            'content': 'Learn Python basics including variables, functions, and classes',
-            'tags': ['python', 'programming', 'beginner'],
-            'language': 'en',
-            'publish_date': 1709251200
+            ["title"] = new AttributeSchemaConfig
+            {
+                Type = "string",
+                FullTextSearch = new FullTextSearchConfig
+                {
+                    Language = Language.English,
+                    Stemming = true,
+                    RemoveStopwords = true,
+                    CaseSensitive = false,
+                },
+            },
+            ["content"] = new AttributeSchemaConfig
+            {
+                Type = "string",
+                FullTextSearch = new FullTextSearchConfig
+                {
+                    Language = Language.English,
+                    Stemming = true,
+                    RemoveStopwords = true,
+                },
+            },
+            ["tags"] = new AttributeSchemaConfig
+            {
+                Type = "[]string",
+                FullTextSearch = new FullTextSearchConfig
+                {
+                    Stemming = false,
+                    RemoveStopwords = false,
+                    CaseSensitive = true,
+                },
+            },
         },
-        {
-            'id': 2,
-            'title': 'Advanced TypeScript Tips',
-            'content': 'Discover advanced TypeScript features and type system tricks',
-            'tags': ['typescript', 'javascript', 'advanced'],
-            'language': 'en',
-            'publish_date': 1709337600
-        },
-        {
-            'id': 3,
-            'title': 'Python vs JavaScript',
-            'content': 'Compare Python and JavaScript for web development',
-            'tags': ['python', 'javascript', 'comparison'],
-            'language': 'en',
-            'publish_date': 1709424000
-        }
-    ],
-    schema={
-        'title': {
-            'type': 'string',
-            'full_text_search': {
-                # See all FTS indexing options at
-                # https://turbopuffer.com/docs/write#param-full_text_search
-                'language': 'english',
-                'stemming': True,
-                'remove_stopwords': True,
-                'case_sensitive': False
-            }
-        },
-        'content': {
-            'type': 'string',
-            'full_text_search': {
-                'language': 'english',
-                'stemming': True,
-                'remove_stopwords': True
-            }
-        },
-        'tags': {
-            'type': '[]string',
-            'full_text_search': {
-                'stemming': False,
-                'remove_stopwords': False,
-                'case_sensitive': True
-            }
-        }
     }
-)
-
-# Advanced FTS search.
-# In this example, hits on `title` and `tags` are weighted / boosted higher than
-# hits on `content`.
-result = ns.query(
-    # See all FTS query options at https://turbopuffer.com/docs/query
-    rank_by=('Sum', (
-        ('Product', 3, ('title', 'BM25', 'python beginner')),
-        ('Product', 2, ('tags', 'BM25', 'python beginner')),
-        ('content', 'BM25', 'python beginner')
-    )),
-    filters=('And', (
-        ('publish_date', 'Gte', 1709251200),
-        ('language', 'Eq', 'en'),
-    )),
-    limit=10,
-    include_attributes=['title', 'content', 'tags']
-)
-print(result.rows)
-
-# To combine with vector search, see:
-# https://turbopuffer.com/docs/hybrid-search
-```
-```typescript
-import { Turbopuffer } from "@turbopuffer/turbopuffer";
-
-const tpuf = new Turbopuffer({
-  region: "gcp-us-central1", // choose best region: https://turbopuffer.com/docs/regions
-});
-
-const ns = tpuf.namespace(`fts-advanced-example-ts`);
-
-// Write some documents with a rich set of attributes.
-await ns.write({
-  upsert_rows: [
-    {
-      id: 1,
-      title: "Getting Started with Python",
-      content: "Learn Python basics including variables, functions, and classes",
-      tags: ["python", "programming", "beginner"],
-      language: "en",
-      publish_date: 1709251200,
-    },
-    {
-      id: 2,
-      title: "Advanced TypeScript Tips",
-      content: "Discover advanced TypeScript features and type system tricks",
-      tags: ["typescript", "javascript", "advanced"],
-      language: "en",
-      publish_date: 1709337600,
-    },
-    {
-      id: 3,
-      title: "Python vs JavaScript",
-      content: "Compare Python and JavaScript for web development",
-      tags: ["python", "javascript", "comparison"],
-      language: "en",
-      publish_date: 1709424000,
-    },
-  ],
-  schema: {
-    title: {
-      type: "string",
-      full_text_search: {
-        // See all FTS indexing options at
-        // https://turbopuffer.com/docs/write#param-full_text_search
-        language: "english",
-        stemming: true,
-        remove_stopwords: true,
-        case_sensitive: false,
-      },
-    },
-    content: {
-      type: "string",
-      full_text_search: {
-        language: "english",
-        stemming: true,
-        remove_stopwords: true,
-      },
-    },
-    tags: {
-      type: "[]string",
-      full_text_search: {
-        stemming: false,
-        remove_stopwords: false,
-        case_sensitive: true,
-      },
-    },
-  },
-});
+);
 
 // Advanced FTS search.
-// In this example, hits on `title` and `tags` are weighted / boosted higher
-// than hits on `content`.
-const results = await ns.query({
-  // See all FTS query options at https://turbopuffer.com/docs/query
-  rank_by: [
-    "Sum",
-    [
-      ["Product", 3, ["title", "BM25", "python beginner"]],
-      ["Product", 2, ["tags", "BM25", "python beginner"]],
-      ["content", "BM25", "python beginner"],
-    ],
-  ],
-  filters: [
-    "And",
-    [
-      ["publish_date", "Gte", 1709251200],
-      ["language", "Eq", "en"],
-    ],
-  ],
-  limit: 10,
-  include_attributes: ["title", "content", "tags"],
-});
-console.log(results);
-
+// In this example, hits on `title` and `tags` are weighted / boosted higher than
+// hits on `content`.
+var result = await ns.Query(
+    new NamespaceQueryParams
+    {
+        RankBy = RankByText.Sum(
+            RankByText.Product(3, RankByText.BM25("title", "python beginner")),
+            RankByText.Product(2, RankByText.BM25("tags", "python beginner")),
+            RankByText.BM25("content", "python beginner")
+        ),
+        Filters = Filter.And(
+            Filter.Gte("publish_date", 1709251200),
+            Filter.Eq("language", "en")
+        ),
+        Limit = 10,
+        IncludeAttributes = new List<string> { "title", "content", "tags" },
+    }
+);
+foreach (var row in result.GetRows())
+{
+    Console.WriteLine(row);
+}
 // To combine with vector search, see:
 // https://turbopuffer.com/docs/hybrid-search
 ```
@@ -865,8 +855,8 @@ func main() {
 					"publish_date": 1709424000,
 				},
 			},
-			Schema: map[string]turbopuffer.AttributeSchemaConfigParam{
-				"title": {
+			Schema: map[string]turbopuffer.AttributeSchemaParam{
+				"title": {AttributeSchemaConfig: &turbopuffer.AttributeSchemaConfigParam{
 					Type: "string",
 					// See all FTS indexing options at
 					// https://turbopuffer.com/docs/write#param-full_text_search
@@ -876,23 +866,23 @@ func main() {
 						RemoveStopwords: turbopuffer.Bool(true),
 						CaseSensitive:   turbopuffer.Bool(false),
 					},
-				},
-				"content": {
+				}},
+				"content": {AttributeSchemaConfig: &turbopuffer.AttributeSchemaConfigParam{
 					Type: "string",
 					FullTextSearch: &turbopuffer.FullTextSearchConfigParam{
 						Language:        turbopuffer.LanguageEnglish,
 						Stemming:        turbopuffer.Bool(true),
 						RemoveStopwords: turbopuffer.Bool(true),
 					},
-				},
-				"tags": {
+				}},
+				"tags": {AttributeSchemaConfig: &turbopuffer.AttributeSchemaConfigParam{
 					Type: "[]string",
 					FullTextSearch: &turbopuffer.FullTextSearchConfigParam{
 						Stemming:        turbopuffer.Bool(false),
 						RemoveStopwords: turbopuffer.Bool(false),
 						CaseSensitive:   turbopuffer.Bool(true),
 					},
-				},
+				}},
 			},
 		},
 	)
@@ -1052,110 +1042,95 @@ public class FtsAdvanced {
   }
 }
 ```
-```cs
-// dotnet add package Turbopuffer
-using System;
-using System.Collections.Generic;
-using Turbopuffer;
-using Turbopuffer.Models.Namespaces;
+```python
+import turbopuffer
 
-using var tpuf = new TurbopufferClient
-{
-    // Pick the right region: https://turbopuffer.com/docs/regions
-    Region = "gcp-us-central1",
-};
+tpuf = turbopuffer.Turbopuffer(
+    region='gcp-us-central1', # choose best region: https://turbopuffer.com/docs/regions
+)
 
-var ns = tpuf.Namespace("fts-advanced-example-csharp");
+ns = tpuf.namespace(f'fts-advanced-example-py')
 
-await ns.Write(
-    new NamespaceWriteParams
-    {
-        UpsertRows =
-        [
-            new Row()
-                .Set("id", 1)
-                .Set("title", "Getting Started with Python")
-                .Set("content", "Learn Python basics including variables, functions, and classes")
-                .Set("tags", new[] { "python", "programming", "beginner" })
-                .Set("language", "en")
-                .Set("publish_date", 1709251200),
-            new Row()
-                .Set("id", 2)
-                .Set("title", "Advanced TypeScript Tips")
-                .Set("content", "Discover advanced TypeScript features and type system tricks")
-                .Set("tags", new[] { "typescript", "javascript", "advanced" })
-                .Set("language", "en")
-                .Set("publish_date", 1709337600),
-            new Row()
-                .Set("id", 3)
-                .Set("title", "Python vs JavaScript")
-                .Set("content", "Compare Python and JavaScript for web development")
-                .Set("tags", new[] { "python", "javascript", "comparison" })
-                .Set("language", "en")
-                .Set("publish_date", 1709424000),
-        ],
-        Schema = new Dictionary<string, AttributeSchemaConfig>
+# Write some documents with a rich set of attributes.
+ns.write(
+    upsert_rows=[
         {
-            ["title"] = new AttributeSchemaConfig
-            {
-                Type = "string",
-                FullTextSearch = new FullTextSearchConfig
-                {
-                    Language = Language.English,
-                    Stemming = true,
-                    RemoveStopwords = true,
-                    CaseSensitive = false,
-                },
-            },
-            ["content"] = new AttributeSchemaConfig
-            {
-                Type = "string",
-                FullTextSearch = new FullTextSearchConfig
-                {
-                    Language = Language.English,
-                    Stemming = true,
-                    RemoveStopwords = true,
-                },
-            },
-            ["tags"] = new AttributeSchemaConfig
-            {
-                Type = "[]string",
-                FullTextSearch = new FullTextSearchConfig
-                {
-                    Stemming = false,
-                    RemoveStopwords = false,
-                    CaseSensitive = true,
-                },
-            },
+            'id': 1,
+            'title': 'Getting Started with Python',
+            'content': 'Learn Python basics including variables, functions, and classes',
+            'tags': ['python', 'programming', 'beginner'],
+            'language': 'en',
+            'publish_date': 1709251200
         },
+        {
+            'id': 2,
+            'title': 'Advanced TypeScript Tips',
+            'content': 'Discover advanced TypeScript features and type system tricks',
+            'tags': ['typescript', 'javascript', 'advanced'],
+            'language': 'en',
+            'publish_date': 1709337600
+        },
+        {
+            'id': 3,
+            'title': 'Python vs JavaScript',
+            'content': 'Compare Python and JavaScript for web development',
+            'tags': ['python', 'javascript', 'comparison'],
+            'language': 'en',
+            'publish_date': 1709424000
+        }
+    ],
+    schema={
+        'title': {
+            'type': 'string',
+            'full_text_search': {
+                # See all FTS indexing options at
+                # https://turbopuffer.com/docs/write#param-full_text_search
+                'language': 'english',
+                'stemming': True,
+                'remove_stopwords': True,
+                'case_sensitive': False
+            }
+        },
+        'content': {
+            'type': 'string',
+            'full_text_search': {
+                'language': 'english',
+                'stemming': True,
+                'remove_stopwords': True
+            }
+        },
+        'tags': {
+            'type': '[]string',
+            'full_text_search': {
+                'stemming': False,
+                'remove_stopwords': False,
+                'case_sensitive': True
+            }
+        }
     }
-);
+)
 
-// Advanced FTS search.
-// In this example, hits on `title` and `tags` are weighted / boosted higher than
-// hits on `content`.
-var result = await ns.Query(
-    new NamespaceQueryParams
-    {
-        RankBy = RankByText.Sum(
-            RankByText.Product(3, RankByText.BM25("title", "python beginner")),
-            RankByText.Product(2, RankByText.BM25("tags", "python beginner")),
-            RankByText.BM25("content", "python beginner")
-        ),
-        Filters = Filter.And(
-            Filter.Gte("publish_date", 1709251200),
-            Filter.Eq("language", "en")
-        ),
-        Limit = 10,
-        IncludeAttributes = new List<string> { "title", "content", "tags" },
-    }
-);
-foreach (var row in result.GetRows())
-{
-    Console.WriteLine(row);
-}
-// To combine with vector search, see:
-// https://turbopuffer.com/docs/hybrid-search
+# Advanced FTS search.
+# In this example, hits on `title` and `tags` are weighted / boosted higher than
+# hits on `content`.
+result = ns.query(
+    # See all FTS query options at https://turbopuffer.com/docs/query
+    rank_by=('Sum', (
+        ('Product', 3, ('title', 'BM25', 'python beginner')),
+        ('Product', 2, ('tags', 'BM25', 'python beginner')),
+        ('content', 'BM25', 'python beginner')
+    )),
+    filters=('And', (
+        ('publish_date', 'Gte', 1709251200),
+        ('language', 'Eq', 'en'),
+    )),
+    limit=10,
+    include_attributes=['title', 'content', 'tags']
+)
+print(result.rows)
+
+# To combine with vector search, see:
+# https://turbopuffer.com/docs/hybrid-search
 ```
 ```ruby
 require "turbopuffer"
@@ -1247,6 +1222,211 @@ puts result.rows
 # To combine with vector search, see:
 # https://turbopuffer.com/docs/hybrid-search
 ```
+```rust
+use turbopuffer::Client;
+use turbopuffer::serde_json;
+use turbopuffer::types::{
+    AttributeSchemaConfig, Filter, FullTextSearchConfig, Language, RankBy, RankByText, Row,
+};
+
+#[tokio::main]
+async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    // The API key is read from TURBOPUFFER_API_KEY. Create one here: https://turbopuffer.com/dashboard
+    let client = Client::builder()
+        .region("gcp-us-central1") // choose best region: https://turbopuffer.com/docs/regions
+        .build()?;
+
+    let ns = client.namespace("fts-advanced-example-rs");
+
+    // Write some documents with a rich set of attributes.
+    ns.write()
+        .upsert_rows([
+            Row::new(1)
+                .insert("title", "Getting Started with Python")
+                .insert(
+                    "content",
+                    "Learn Python basics including variables, functions, and classes",
+                )
+                .insert("tags", ["python", "programming", "beginner"])
+                .insert("language", "en")
+                .insert("publish_date", 1709251200),
+            Row::new(2)
+                .insert("title", "Advanced TypeScript Tips")
+                .insert(
+                    "content",
+                    "Discover advanced TypeScript features and type system tricks",
+                )
+                .insert("tags", ["typescript", "javascript", "advanced"])
+                .insert("language", "en")
+                .insert("publish_date", 1709337600),
+            Row::new(3)
+                .insert("title", "Python vs JavaScript")
+                .insert(
+                    "content",
+                    "Compare Python and JavaScript for web development",
+                )
+                .insert("tags", ["python", "javascript", "comparison"])
+                .insert("language", "en")
+                .insert("publish_date", 1709424000),
+        ])
+        .schema([
+            (
+                "title",
+                AttributeSchemaConfig::new("string").full_text_search(
+                    // See all FTS indexing options at
+                    // https://turbopuffer.com/docs/write#param-full_text_search
+                    FullTextSearchConfig::new()
+                        .language(Language::English)
+                        .stemming(true)
+                        .remove_stopwords(true)
+                        .case_sensitive(false),
+                ),
+            ),
+            (
+                "content",
+                AttributeSchemaConfig::new("string").full_text_search(
+                    FullTextSearchConfig::new()
+                        .language(Language::English)
+                        .stemming(true)
+                        .remove_stopwords(true),
+                ),
+            ),
+            (
+                "tags",
+                AttributeSchemaConfig::new("[]string").full_text_search(
+                    FullTextSearchConfig::new()
+                        .stemming(false)
+                        .remove_stopwords(false)
+                        .case_sensitive(true),
+                ),
+            ),
+        ])
+        .send()
+        .await?;
+
+    // Advanced FTS search.
+    // In this example, hits on `title` and `tags` are weighted / boosted higher than
+    // hits on `content`.
+    let result = ns
+        .query()
+        // See all FTS query options at https://turbopuffer.com/docs/query
+        .rank_by(RankBy::sum([
+            RankByText::product(3.0, RankByText::bm25("title", "python beginner")),
+            RankByText::product(2.0, RankByText::bm25("tags", "python beginner")),
+            RankByText::bm25("content", "python beginner"),
+        ]))
+        .filters(Filter::and([
+            Filter::gte("publish_date", 1709251200),
+            Filter::eq("language", "en"),
+        ]))
+        .limit(10)
+        .include_attributes(["title", "content", "tags"])
+        .send()
+        .await?;
+    println!("{}", serde_json::to_string_pretty(&result.rows)?);
+
+    // To combine with vector search, see:
+    // https://turbopuffer.com/docs/hybrid-search
+
+    Ok(())
+}
+```
+```typescript
+import { Turbopuffer } from "@turbopuffer/turbopuffer";
+
+const tpuf = new Turbopuffer({
+  region: "gcp-us-central1", // choose best region: https://turbopuffer.com/docs/regions
+});
+
+const ns = tpuf.namespace(`fts-advanced-example-ts`);
+
+// Write some documents with a rich set of attributes.
+await ns.write({
+  upsert_rows: [
+    {
+      id: 1,
+      title: "Getting Started with Python",
+      content: "Learn Python basics including variables, functions, and classes",
+      tags: ["python", "programming", "beginner"],
+      language: "en",
+      publish_date: 1709251200,
+    },
+    {
+      id: 2,
+      title: "Advanced TypeScript Tips",
+      content: "Discover advanced TypeScript features and type system tricks",
+      tags: ["typescript", "javascript", "advanced"],
+      language: "en",
+      publish_date: 1709337600,
+    },
+    {
+      id: 3,
+      title: "Python vs JavaScript",
+      content: "Compare Python and JavaScript for web development",
+      tags: ["python", "javascript", "comparison"],
+      language: "en",
+      publish_date: 1709424000,
+    },
+  ],
+  schema: {
+    title: {
+      type: "string",
+      full_text_search: {
+        // See all FTS indexing options at
+        // https://turbopuffer.com/docs/write#param-full_text_search
+        language: "english",
+        stemming: true,
+        remove_stopwords: true,
+        case_sensitive: false,
+      },
+    },
+    content: {
+      type: "string",
+      full_text_search: {
+        language: "english",
+        stemming: true,
+        remove_stopwords: true,
+      },
+    },
+    tags: {
+      type: "[]string",
+      full_text_search: {
+        stemming: false,
+        remove_stopwords: false,
+        case_sensitive: true,
+      },
+    },
+  },
+});
+
+// Advanced FTS search.
+// In this example, hits on `title` and `tags` are weighted / boosted higher
+// than hits on `content`.
+const results = await ns.query({
+  // See all FTS query options at https://turbopuffer.com/docs/query
+  rank_by: [
+    "Sum",
+    [
+      ["Product", 3, ["title", "BM25", "python beginner"]],
+      ["Product", 2, ["tags", "BM25", "python beginner"]],
+      ["content", "BM25", "python beginner"],
+    ],
+  ],
+  filters: [
+    "And",
+    [
+      ["publish_date", "Gte", 1709251200],
+      ["language", "Eq", "en"],
+    ],
+  ],
+  limit: 10,
+  include_attributes: ["title", "content", "tags"],
+});
+console.log(results);
+
+// To combine with vector search, see:
+// https://turbopuffer.com/docs/hybrid-search
+```
 <!-- /multilang -->
 
 ## Tokenizers
@@ -1297,119 +1477,99 @@ When turbopuffer's built-in tokenizers aren't sufficient, use the
 to perform client side tokenization using arbitrary logic.
 
 <!-- multilang -->
-```python
-import turbopuffer
-from typing import List
+```cs
+// dotnet add package Turbopuffer
+using System;
+using System.Collections.Generic;
+using System.Linq;
+using System.Text.RegularExpressions;
+using System.Threading.Tasks;
+using Turbopuffer;
+using Turbopuffer.Models.Namespaces;
+using Turbopuffer.Services;
 
-tpuf = turbopuffer.Turbopuffer(
-    region='gcp-us-central1', # choose best region: https://turbopuffer.com/docs/regions
-)
+using var client = new TurbopufferClient
+{
+    // Pick the right region: https://turbopuffer.com/docs/regions
+    Region = "gcp-us-central1",
+};
 
-# A simple word tokenizer that preserves hyphens instead of splitting on them.
-def tokenize(text: str) -> List[str]:
-    # Replace all characters besides alphanumeric and '-' with spaces.
-    cleaned = ""
-    for ch in text:
-        if ch.isalnum() or ch in "-":
-            cleaned += ch
-        else:
-            cleaned += str(" ")
-    # Lowercase and split on spaces.
-    return cleaned.lower().split()
-
-# Write some sample data.
-ns = tpuf.namespace(f'fts-custom-tokenization-example-py')
-ns.write(
-    upsert_rows=[
-        {"id": 1, "content": tokenize("We hold these truths to be self-evident.")},
-        {"id": 2, "content": tokenize("For my own self, it seemed evident.")},
-    ],
-    schema={
-        'content': {
-            'type': '[]string',
-            'full_text_search': {'tokenizer': 'pre_tokenized_array'}
-        }
-    }
-)
-
-# Query for "self" and "evident".
-results = ns.query(
-    # Notice that the BM25 operator now expects a list of tokens, not a string.
-    rank_by=('content', 'BM25', ['self', 'evident']),
-    limit=10,
-)
-# Only document 2 is matched, because document 1 has the token "self-evident"
-# but neither the token "self" nor "evident".
-print(results)
-
-# Query for "self-evident".
-results = ns.query(
-    rank_by=('content', 'BM25', ['self-evident']),
-    limit=10,
-)
-# Now only document 1 is matched.
-print(results)
-
-# To accept string queries, simply apply the tokenizer to the query string
-# before passing it to the `BM25` operator.
-def query_string(query: str):
-    return ns.query(
-        rank_by=('content', 'BM25', tokenize(query)),
-        limit=10,
-    )
-```
-```typescript
-import { Turbopuffer } from "@turbopuffer/turbopuffer";
-
-// A simple word tokenizer that preserves hyphens instead of splitting on them.
-function tokenize(text: string): string[] {
-  return text.toLowerCase().split(/[^a-z0-9-]+/).filter(s => s.length > 0);
-}
-
-const tpuf = new Turbopuffer({
-  region: "gcp-us-central1", // choose best region: https://turbopuffer.com/docs/regions
-});
+var ns = client.Namespace("fts-custom-tokenization-example-csharp");
 
 // Write some sample data.
-const ns = tpuf.namespace(`fts-custom-tokenization-example-ts`);
-await ns.write({
-  upsert_rows: [
-    { id: 1, content: tokenize("We hold these truths to be self-evident.") },
-    { id: 2, content: tokenize("For my own self, it seemed evident.") },
-  ],
-  schema: {
-    content: {
-      type: "[]string",
-      full_text_search: { tokenizer: "pre_tokenized_array" }
+await ns.Write(
+    new NamespaceWriteParams
+    {
+        UpsertRows =
+        [
+            new Row().Set("id", 1).Set("content", Tokenize("We hold these truths to be self-evident.")),
+            new Row().Set("id", 2).Set("content", Tokenize("For my own self, it seemed evident.")),
+        ],
+        Schema = new Dictionary<string, AttributeSchemaConfig>
+        {
+            ["content"] = new AttributeSchemaConfig
+            {
+                Type = "[]string",
+                FullTextSearch = new FullTextSearchConfig
+                {
+                    Tokenizer = Tokenizer.PreTokenizedArray,
+                },
+            },
+        },
     }
-  }
-});
+);
 
 // Query for "self" and "evident".
-let results = await ns.query({
-  // Notice that the BM25 operator now expects a list of tokens, not a string
-  rank_by: ["content", "BM25", ["self", "evident"]],
-  limit: 10,
-});
-// Only document 2 is matched, because document 1 has the token "self-evident"
-// but neither the token "self" nor "evident".
-console.log(results);
+var results = await ns.Query(
+    // Notice that the BM25 operator now expects a list of tokens, not a
+    // string.
+    new NamespaceQueryParams
+    {
+        RankBy = RankByText.BM25("content", new[] { "self", "evident" }),
+        Limit = 10,
+    }
+);
+// Only document 2 is matched, because document 1 has the token
+// "self-evident" but neither the token "self" nor "evident".
+foreach (var row in results.GetRows())
+{
+    Console.WriteLine(row);
+}
 
 // Query for "self-evident".
-results = await ns.query({
-  rank_by: ["content", "BM25", ["self-evident"]],
-  limit: 10,
-});
+results = await ns.Query(
+    new NamespaceQueryParams
+    {
+        RankBy = RankByText.BM25("content", new[] { "self-evident" }),
+        Limit = 10,
+    }
+);
 // Now only document 1 is matched.
-console.log(results);
+foreach (var row in results.GetRows())
+{
+    Console.WriteLine(row);
+}
 
-// To handle string queries, simply apply the tokenizer to the query
-// string before passing it to the `BM25` operator.
-async function queryString(query: string) {
-  return await ns.query({
-    rank_by: ["content", "BM25", tokenize(query)],
-    limit: 10,
-  });
+// A simple word tokenizer that preserves hyphens instead of splitting on them.
+static List<string> Tokenize(string text)
+{
+    // Replace all characters besides alphanumeric and '-' with spaces.
+    string cleaned = Regex.Replace(text, "[^a-zA-Z0-9-]", " ");
+    // Lowercase and split on spaces.
+    return cleaned.ToLowerInvariant().Split(' ', StringSplitOptions.RemoveEmptyEntries).ToList();
+}
+
+// To accept string queries, simply apply the tokenizer to the query string
+// before passing it to the `BM25` operator.
+static async Task QueryString(INamespaceService ns, string query)
+{
+    await ns.Query(
+        new NamespaceQueryParams
+        {
+            RankBy = RankByText.BM25("content", Tokenize(query)),
+            Limit = 10,
+        }
+    );
 }
 ```
 ```go
@@ -1457,13 +1617,13 @@ func main() {
 					"content": tokenize("For my own self, it seemed evident."),
 				},
 			},
-			Schema: map[string]turbopuffer.AttributeSchemaConfigParam{
-				"content": {
+			Schema: map[string]turbopuffer.AttributeSchemaParam{
+				"content": {AttributeSchemaConfig: &turbopuffer.AttributeSchemaConfigParam{
 					Type: "[]string",
 					FullTextSearch: &turbopuffer.FullTextSearchConfigParam{
 						Tokenizer: turbopuffer.TokenizerPreTokenizedArray,
 					},
-				},
+				}},
 			},
 		},
 	)
@@ -1617,100 +1777,66 @@ public class FtsCustomTokenization {
   }
 }
 ```
-```cs
-// dotnet add package Turbopuffer
-using System;
-using System.Collections.Generic;
-using System.Linq;
-using System.Text.RegularExpressions;
-using System.Threading.Tasks;
-using Turbopuffer;
-using Turbopuffer.Models.Namespaces;
-using Turbopuffer.Services;
+```python
+import turbopuffer
+from typing import List
 
-using var client = new TurbopufferClient
-{
-    // Pick the right region: https://turbopuffer.com/docs/regions
-    Region = "gcp-us-central1",
-};
+tpuf = turbopuffer.Turbopuffer(
+    region='gcp-us-central1', # choose best region: https://turbopuffer.com/docs/regions
+)
 
-var ns = client.Namespace("fts-custom-tokenization-example-csharp");
+# A simple word tokenizer that preserves hyphens instead of splitting on them.
+def tokenize(text: str) -> List[str]:
+    # Replace all characters besides alphanumeric and '-' with spaces.
+    cleaned = ""
+    for ch in text:
+        if ch.isalnum() or ch in "-":
+            cleaned += ch
+        else:
+            cleaned += str(" ")
+    # Lowercase and split on spaces.
+    return cleaned.lower().split()
 
-// Write some sample data.
-await ns.Write(
-    new NamespaceWriteParams
-    {
-        UpsertRows =
-        [
-            new Row().Set("id", 1).Set("content", Tokenize("We hold these truths to be self-evident.")),
-            new Row().Set("id", 2).Set("content", Tokenize("For my own self, it seemed evident.")),
-        ],
-        Schema = new Dictionary<string, AttributeSchemaConfig>
-        {
-            ["content"] = new AttributeSchemaConfig
-            {
-                Type = "[]string",
-                FullTextSearch = new FullTextSearchConfig
-                {
-                    Tokenizer = Tokenizer.PreTokenizedArray,
-                },
-            },
-        },
-    }
-);
-
-// Query for "self" and "evident".
-var results = await ns.Query(
-    // Notice that the BM25 operator now expects a list of tokens, not a
-    // string.
-    new NamespaceQueryParams
-    {
-        RankBy = RankByText.BM25("content", new[] { "self", "evident" }),
-        Limit = 10,
-    }
-);
-// Only document 2 is matched, because document 1 has the token
-// "self-evident" but neither the token "self" nor "evident".
-foreach (var row in results.GetRows())
-{
-    Console.WriteLine(row);
-}
-
-// Query for "self-evident".
-results = await ns.Query(
-    new NamespaceQueryParams
-    {
-        RankBy = RankByText.BM25("content", new[] { "self-evident" }),
-        Limit = 10,
-    }
-);
-// Now only document 1 is matched.
-foreach (var row in results.GetRows())
-{
-    Console.WriteLine(row);
-}
-
-// A simple word tokenizer that preserves hyphens instead of splitting on them.
-static List<string> Tokenize(string text)
-{
-    // Replace all characters besides alphanumeric and '-' with spaces.
-    string cleaned = Regex.Replace(text, "[^a-zA-Z0-9-]", " ");
-    // Lowercase and split on spaces.
-    return cleaned.ToLowerInvariant().Split(' ', StringSplitOptions.RemoveEmptyEntries).ToList();
-}
-
-// To accept string queries, simply apply the tokenizer to the query string
-// before passing it to the `BM25` operator.
-static async Task QueryString(INamespaceService ns, string query)
-{
-    await ns.Query(
-        new NamespaceQueryParams
-        {
-            RankBy = RankByText.BM25("content", Tokenize(query)),
-            Limit = 10,
+# Write some sample data.
+ns = tpuf.namespace(f'fts-custom-tokenization-example-py')
+ns.write(
+    upsert_rows=[
+        {"id": 1, "content": tokenize("We hold these truths to be self-evident.")},
+        {"id": 2, "content": tokenize("For my own self, it seemed evident.")},
+    ],
+    schema={
+        'content': {
+            'type': '[]string',
+            'full_text_search': {'tokenizer': 'pre_tokenized_array'}
         }
-    );
-}
+    }
+)
+
+# Query for "self" and "evident".
+results = ns.query(
+    # Notice that the BM25 operator now expects a list of tokens, not a string.
+    rank_by=('content', 'BM25', ['self', 'evident']),
+    limit=10,
+)
+# Only document 2 is matched, because document 1 has the token "self-evident"
+# but neither the token "self" nor "evident".
+print(results)
+
+# Query for "self-evident".
+results = ns.query(
+    rank_by=('content', 'BM25', ['self-evident']),
+    limit=10,
+)
+# Now only document 1 is matched.
+print(results)
+
+# To accept string queries, simply apply the tokenizer to the query string
+# before passing it to the `BM25` operator.
+def query_string(query: str):
+    return ns.query(
+        rank_by=('content', 'BM25', tokenize(query)),
+        limit=10,
+    )
 ```
 ```ruby
 require "turbopuffer"
@@ -1765,6 +1891,139 @@ def query_string(ns, query)
     limit: 10,
   )
 end
+```
+```rust
+use turbopuffer::Client;
+use turbopuffer::Namespace;
+use turbopuffer::serde_json;
+use turbopuffer::types::{
+    AttributeSchemaConfig, FullTextSearchConfig, QueryResult, RankBy, Row, Tokenizer,
+};
+
+/// A simple word tokenizer that preserves hyphens instead of splitting on them.
+fn tokenize(text: &str) -> Vec<String> {
+    text.to_lowercase()
+        // Split on all characters besides alphanumeric and '-'.
+        .split(|c: char| !c.is_ascii_alphanumeric() && c != '-')
+        .filter(|s| !s.is_empty())
+        .map(String::from)
+        .collect()
+}
+
+#[tokio::main]
+async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    // The API key is read from TURBOPUFFER_API_KEY. Create one here: https://turbopuffer.com/dashboard
+    let client = Client::builder()
+        .region("gcp-us-central1") // choose best region: https://turbopuffer.com/docs/regions
+        .build()?;
+
+    // Write some sample data.
+    let ns = client.namespace("fts-custom-tokenization-example-rs");
+    ns.write()
+        .upsert_rows([
+            Row::new(1).insert(
+                "content",
+                tokenize("We hold these truths to be self-evident."),
+            ),
+            Row::new(2).insert("content", tokenize("For my own self, it seemed evident.")),
+        ])
+        .schema([(
+            "content",
+            AttributeSchemaConfig::new("[]string").full_text_search(
+                FullTextSearchConfig::new().tokenizer(Tokenizer::PreTokenizedArray),
+            ),
+        )])
+        .send()
+        .await?;
+
+    // Query for "self" and "evident".
+    let result = ns
+        .query()
+        // Notice that the BM25 operator now expects a list of tokens, not a string.
+        .rank_by(RankBy::bm25("content", ["self", "evident"]))
+        .limit(10)
+        .send()
+        .await?;
+    // Only document 2 is matched, because document 1 has the token "self-evident"
+    // but neither the token "self" nor "evident".
+    println!("{}", serde_json::to_string_pretty(&result.rows)?);
+
+    // Query for "self-evident".
+    let result = ns
+        .query()
+        .rank_by(RankBy::bm25("content", ["self-evident"]))
+        .limit(10)
+        .send()
+        .await?;
+    // Now only document 1 is matched.
+    println!("{}", serde_json::to_string_pretty(&result.rows)?);
+
+    Ok(())
+}
+
+/// To accept string queries, simply apply the tokenizer to the query string
+/// before passing it to the `BM25` operator.
+async fn query_string(ns: &Namespace, query: &str) -> turbopuffer::Result<QueryResult> {
+    ns.query()
+        .rank_by(RankBy::bm25("content", tokenize(query)))
+        .limit(10)
+        .send()
+        .await
+}
+```
+```typescript
+import { Turbopuffer } from "@turbopuffer/turbopuffer";
+
+// A simple word tokenizer that preserves hyphens instead of splitting on them.
+function tokenize(text: string): string[] {
+  return text.toLowerCase().split(/[^a-z0-9-]+/).filter(s => s.length > 0);
+}
+
+const tpuf = new Turbopuffer({
+  region: "gcp-us-central1", // choose best region: https://turbopuffer.com/docs/regions
+});
+
+// Write some sample data.
+const ns = tpuf.namespace(`fts-custom-tokenization-example-ts`);
+await ns.write({
+  upsert_rows: [
+    { id: 1, content: tokenize("We hold these truths to be self-evident.") },
+    { id: 2, content: tokenize("For my own self, it seemed evident.") },
+  ],
+  schema: {
+    content: {
+      type: "[]string",
+      full_text_search: { tokenizer: "pre_tokenized_array" }
+    }
+  }
+});
+
+// Query for "self" and "evident".
+let results = await ns.query({
+  // Notice that the BM25 operator now expects a list of tokens, not a string
+  rank_by: ["content", "BM25", ["self", "evident"]],
+  limit: 10,
+});
+// Only document 2 is matched, because document 1 has the token "self-evident"
+// but neither the token "self" nor "evident".
+console.log(results);
+
+// Query for "self-evident".
+results = await ns.query({
+  rank_by: ["content", "BM25", ["self-evident"]],
+  limit: 10,
+});
+// Now only document 1 is matched.
+console.log(results);
+
+// To handle string queries, simply apply the tokenizer to the query
+// string before passing it to the `BM25` operator.
+async function queryString(query: string) {
+  return await ns.query({
+    rank_by: ["content", "BM25", tokenize(query)],
+    limit: 10,
+  });
+}
 ```
 <!-- /multilang -->
 
@@ -1928,85 +2187,71 @@ curl https://gcp-us-central1.turbopuffer.com/v2/namespaces/fts-fuzzy-example-cur
 }
 '
 ```
-```python
-# $ pip install turbopuffer
-import turbopuffer
+```cs
+// dotnet add package Turbopuffer
+using System;
+using System.Collections.Generic;
+using System.Text.Json;
+using Turbopuffer;
+using Turbopuffer.Models.Namespaces;
 
-tpuf = turbopuffer.Turbopuffer(
-    region='gcp-us-central1', # choose best region: https://turbopuffer.com/docs/regions
-)
-ns = tpuf.namespace(f'fts-fuzzy-example-py')
-ns.write(
-    upsert_rows=[
-        {'id': 1, 'company_name': 'turbopuffer'},
-        {'id': 2, 'company_name': 'turbopufer inc'},
-    ],
-    schema={
-        'company_name': {
-            'type': 'string',
-            'fuzzy': True,
-            'glob': True,
-        },
-    },
-)
-result = ns.query(
-    rank_by=('Sum', (
-        ('Product', 3, ('company_name', 'Glob', '*turbopufer*')),
-        ('company_name', 'Fuzzy', 'turbopufer', {
-            'max_edit_distance': [
-                {'min_query_chars': 6, 'distance': 1},
-            ],
-            "case_sensitive": False
-        }),
-    )),
-    include_attributes=["company_name"],
-    limit=10
-)
-print(result.rows)
-```
-```typescript
-import { Turbopuffer } from "@turbopuffer/turbopuffer";
+using var tpuf = new TurbopufferClient
+{
+    // Pick the right region: https://turbopuffer.com/docs/regions
+    Region = "gcp-us-central1",
+};
 
-const tpuf = new Turbopuffer({
-  region: "gcp-us-central1", // choose best region: https://turbopuffer.com/docs/regions
-});
+var ns = tpuf.Namespace("fts-fuzzy-example-csharp");
 
-const ns = tpuf.namespace(`fts-fuzzy-example-ts`);
-
-await ns.write({
-  upsert_rows: [
-    { id: 1, company_name: "turbopuffer" },
-    { id: 2, company_name: "turbopufer inc" },
-  ],
-  schema: {
-    company_name: {
-      type: "string",
-      fuzzy: true,
-      glob: true,
-    },
-  },
-});
-
-const result = await ns.query({
-  rank_by: [
-    "Sum",
-    [
-      ["Product", 3, ["company_name", "Glob", "*turbopufer*"]],
-      [
-        "company_name",
-        "Fuzzy",
-        "turbopufer",
+await ns.Write(
+    new NamespaceWriteParams
+    {
+        UpsertRows =
+        [
+            new Row().Set("id", 1).Set("company_name", "turbopuffer"),
+            new Row().Set("id", 2).Set("company_name", "turbopufer inc"),
+        ],
+        Schema = new Dictionary<string, AttributeSchemaConfig>
         {
-          max_edit_distance: [{ min_query_chars: 6, distance: 1 }],
-          case_sensitive: false,
+            ["company_name"] = new AttributeSchemaConfig
+            {
+                Type = "string",
+                Fuzzy = true,
+                Glob = true,
+            },
         },
-      ],
-    ],
-  ],
-  include_attributes: ["company_name"],
-  limit: 10,
-});
-console.log(result.rows);
+    }
+);
+var result = await ns.Query(
+    new NamespaceQueryParams
+    {
+        RankBy = RankByText.Sum(
+            RankByText.Product(3, Filter.Glob("company_name", "*turbopufer*")),
+            Filter.Fuzzy(
+                "company_name",
+                "turbopufer",
+                FuzzyParams.FromRawUnchecked(
+                    new Dictionary<string, JsonElement>
+                    {
+                        ["max_edit_distance"] = JsonSerializer.SerializeToElement(
+                            new[]
+                            {
+                                new FuzzyMaxEditDistance { MinQueryChars = 6, Distance = 1 },
+                            }
+                        ),
+                        ["case_sensitive"] = JsonSerializer.SerializeToElement(false),
+                    }
+                )
+            )
+        ),
+        IncludeAttributes = new List<string> { "company_name" },
+        Limit = 10,
+    }
+);
+foreach (var row in result.GetRows())
+{
+    Console.WriteLine(row);
+}
 ```
 ```go
 package main
@@ -2040,12 +2285,12 @@ func main() {
 					"company_name": "turbopufer inc",
 				},
 			},
-			Schema: map[string]turbopuffer.AttributeSchemaConfigParam{
-				"company_name": {
+			Schema: map[string]turbopuffer.AttributeSchemaParam{
+				"company_name": {AttributeSchemaConfig: &turbopuffer.AttributeSchemaConfigParam{
 					Type:  "string",
 					Fuzzy: turbopuffer.Bool(true),
 					Glob:  turbopuffer.Bool(true),
-				},
+				}},
 			},
 		},
 	)
@@ -2138,71 +2383,41 @@ public class FtsFuzzy {
   }
 }
 ```
-```cs
-// dotnet add package Turbopuffer
-using System;
-using System.Collections.Generic;
-using System.Text.Json;
-using Turbopuffer;
-using Turbopuffer.Models.Namespaces;
+```python
+# $ pip install turbopuffer
+import turbopuffer
 
-using var tpuf = new TurbopufferClient
-{
-    // Pick the right region: https://turbopuffer.com/docs/regions
-    Region = "gcp-us-central1",
-};
-
-var ns = tpuf.Namespace("fts-fuzzy-example-csharp");
-
-await ns.Write(
-    new NamespaceWriteParams
-    {
-        UpsertRows =
-        [
-            new Row().Set("id", 1).Set("company_name", "turbopuffer"),
-            new Row().Set("id", 2).Set("company_name", "turbopufer inc"),
-        ],
-        Schema = new Dictionary<string, AttributeSchemaConfig>
-        {
-            ["company_name"] = new AttributeSchemaConfig
-            {
-                Type = "string",
-                Fuzzy = true,
-                Glob = true,
-            },
+tpuf = turbopuffer.Turbopuffer(
+    region='gcp-us-central1', # choose best region: https://turbopuffer.com/docs/regions
+)
+ns = tpuf.namespace(f'fts-fuzzy-example-py')
+ns.write(
+    upsert_rows=[
+        {'id': 1, 'company_name': 'turbopuffer'},
+        {'id': 2, 'company_name': 'turbopufer inc'},
+    ],
+    schema={
+        'company_name': {
+            'type': 'string',
+            'fuzzy': True,
+            'glob': True,
         },
-    }
-);
-var result = await ns.Query(
-    new NamespaceQueryParams
-    {
-        RankBy = RankByText.Sum(
-            RankByText.Product(3, Filter.Glob("company_name", "*turbopufer*")),
-            Filter.Fuzzy(
-                "company_name",
-                "turbopufer",
-                FuzzyParams.FromRawUnchecked(
-                    new Dictionary<string, JsonElement>
-                    {
-                        ["max_edit_distance"] = JsonSerializer.SerializeToElement(
-                            new[]
-                            {
-                                new FuzzyMaxEditDistance { MinQueryChars = 6, Distance = 1 },
-                            }
-                        ),
-                        ["case_sensitive"] = JsonSerializer.SerializeToElement(false),
-                    }
-                )
-            )
-        ),
-        IncludeAttributes = new List<string> { "company_name" },
-        Limit = 10,
-    }
-);
-foreach (var row in result.GetRows())
-{
-    Console.WriteLine(row);
-}
+    },
+)
+result = ns.query(
+    rank_by=('Sum', (
+        ('Product', 3, ('company_name', 'Glob', '*turbopufer*')),
+        ('company_name', 'Fuzzy', 'turbopufer', {
+            'max_edit_distance': [
+                {'min_query_chars': 6, 'distance': 1},
+            ],
+            "case_sensitive": False
+        }),
+    )),
+    include_attributes=["company_name"],
+    limit=10
+)
+print(result.rows)
 ```
 ```ruby
 require "turbopuffer"
@@ -2247,6 +2462,99 @@ result = ns.query(
   limit: 10,
 )
 puts result.rows
+```
+```rust
+// $ cargo add turbopuffer tokio --features tokio/full
+use turbopuffer::Client;
+use turbopuffer::serde_json;
+use turbopuffer::types::{
+    AttributeSchemaConfig, Filter, FuzzyMaxEditDistance, FuzzyParams, RankBy, RankByText, Row,
+};
+
+#[tokio::main]
+async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    // The API key is read from TURBOPUFFER_API_KEY. Create one here: https://turbopuffer.com/dashboard
+    let client = Client::builder()
+        .region("gcp-us-central1") // choose best region: https://turbopuffer.com/docs/regions
+        .build()?;
+
+    let ns = client.namespace("fts-fuzzy-example-rs");
+
+    ns.write()
+        .upsert_rows([
+            Row::new(1).insert("company_name", "turbopuffer"),
+            Row::new(2).insert("company_name", "turbopufer inc"),
+        ])
+        .schema([(
+            "company_name",
+            AttributeSchemaConfig::new("string").fuzzy(true).glob(true),
+        )])
+        .send()
+        .await?;
+
+    let result = ns
+        .query()
+        .rank_by(RankBy::sum([
+            RankByText::product(3.0, Filter::glob("company_name", "*turbopufer*")),
+            RankByText::filter(Filter::fuzzy(
+                "company_name",
+                "turbopufer",
+                // Queries of 6 or more characters allow 1 edit.
+                FuzzyParams::new([FuzzyMaxEditDistance::new(6, 1)]).case_sensitive(false),
+            )),
+        ]))
+        .include_attributes(["company_name"])
+        .limit(10)
+        .send()
+        .await?;
+    println!("{}", serde_json::to_string_pretty(&result.rows)?);
+
+    Ok(())
+}
+```
+```typescript
+import { Turbopuffer } from "@turbopuffer/turbopuffer";
+
+const tpuf = new Turbopuffer({
+  region: "gcp-us-central1", // choose best region: https://turbopuffer.com/docs/regions
+});
+
+const ns = tpuf.namespace(`fts-fuzzy-example-ts`);
+
+await ns.write({
+  upsert_rows: [
+    { id: 1, company_name: "turbopuffer" },
+    { id: 2, company_name: "turbopufer inc" },
+  ],
+  schema: {
+    company_name: {
+      type: "string",
+      fuzzy: true,
+      glob: true,
+    },
+  },
+});
+
+const result = await ns.query({
+  rank_by: [
+    "Sum",
+    [
+      ["Product", 3, ["company_name", "Glob", "*turbopufer*"]],
+      [
+        "company_name",
+        "Fuzzy",
+        "turbopufer",
+        {
+          max_edit_distance: [{ min_query_chars: 6, distance: 1 }],
+          case_sensitive: false,
+        },
+      ],
+    ],
+  ],
+  include_attributes: ["company_name"],
+  limit: 10,
+});
+console.log(result.rows);
 ```
 <!-- /multilang -->
 

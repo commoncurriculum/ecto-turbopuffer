@@ -13,8 +13,8 @@
 - Upsert latency (512kb docs): p50=165ms, p90=248ms, p99=850ms
 
 Walk a tiny namespace through the core loop: connect, write rows with vectors
-and attributes, query them, simple aggregations, then layer on conditional
-writes and branching.
+and attributes, query and rerank them, simple aggregations, then layer on
+conditional writes and branching.
 
 If you are an agent, you may wish to [read the full documentation in
 Markdown](/llms-full.txt).
@@ -24,6 +24,7 @@ Markdown](/llms-full.txt).
 1. Install an SDK:
 
    <!-- multilang -->
+     
      
      
      
@@ -51,235 +52,200 @@ TPUF_URL="https://gcp-us-central1.turbopuffer.com" # choose best region: https:/
 TPUF_NAMESPACE="${TPUF_NAMESPACE:-quickstart-$(date +%s)-$$}"
 TPUF_BRANCH_NAMESPACE="${TPUF_BRANCH_NAMESPACE:-$TPUF_NAMESPACE-branch}"
 ```
-```python
-import os
-import uuid
-import turbopuffer
+```cs
+// dotnet add package Turbopuffer
+using System;
+using Turbopuffer;
 
-tpuf = turbopuffer.Turbopuffer(
-    api_key=os.getenv("TURBOPUFFER_API_KEY"), # created here: https://turbopuffer.com/dashboard
-    region="gcp-us-central1", # choose best region: https://turbopuffer.com/docs/regions
-)
-namespace = os.getenv("TURBOPUFFER_NAMESPACE", f"quickstart-{uuid.uuid4().hex[:8]}")
-ns = tpuf.namespace(namespace)
+using var tpuf = new TurbopufferClient
+{
+    // API tokens are created in the dashboard: https://turbopuffer.com/dashboard
+    Region = "gcp-us-central1", // choose best region: https://turbopuffer.com/docs/regions
+};
+
+var namespaceName =
+    Environment.GetEnvironmentVariable("TURBOPUFFER_NAMESPACE")
+    ?? $"quickstart-{Guid.NewGuid().ToString("N").Substring(0, 8)}";
+var ns = tpuf.Namespace(namespaceName);
 ```
-```python
-# $ pip install turbopuffer sentence-transformers
-import os
-import uuid
-from typing import List
-import turbopuffer
-from sentence_transformers import SentenceTransformer
+```cs
+// dotnet add package Turbopuffer
+using System;
+using System.Collections.Generic;
+using System.Linq;
+using System.Net.Http;
+using System.Net.Http.Headers;
+using System.Text;
+using System.Text.Json;
+using Turbopuffer;
 
-tpuf = turbopuffer.Turbopuffer(
-    api_key=os.getenv("TURBOPUFFER_API_KEY"), # created here: https://turbopuffer.com/dashboard
-    region="gcp-us-central1", # choose best region: https://turbopuffer.com/docs/regions
-)
-namespace = os.getenv("TURBOPUFFER_NAMESPACE", f"quickstart-{uuid.uuid4().hex[:8]}")
-ns = tpuf.namespace(namespace)
+using var tpuf = new TurbopufferClient
+{
+    Region = "gcp-us-central1", // choose best region: https://turbopuffer.com/docs/regions
+};
 
-# Local embeddings with BGE — no API key needed.
-# Model is downloaded on first run (~130 MB).
-bge = SentenceTransformer("BAAI/bge-small-en-v1.5")
+var namespaceName =
+    Environment.GetEnvironmentVariable("TURBOPUFFER_NAMESPACE")
+    ?? $"quickstart-{Guid.NewGuid().ToString("N").Substring(0, 8)}";
+var ns = tpuf.Namespace(namespaceName);
 
-def embed(text: str) -> List[float]:
-    return bge.encode(text).tolist()
-```
-```python
-# $ pip install turbopuffer cohere
-import os
-import uuid
-from typing import List
-import turbopuffer
-from cohere import ClientV2
-
-tpuf = turbopuffer.Turbopuffer(
-    api_key=os.getenv("TURBOPUFFER_API_KEY"), # created here: https://turbopuffer.com/dashboard
-    region="gcp-us-central1", # choose best region: https://turbopuffer.com/docs/regions
-)
-namespace = os.getenv("TURBOPUFFER_NAMESPACE", f"quickstart-{uuid.uuid4().hex[:8]}")
-ns = tpuf.namespace(namespace)
-cohere = ClientV2(api_key=os.environ["COHERE_API_KEY"])
-
-def embed(text: str) -> List[float]:
-    return cohere.embed(
-        model="embed-v4.0",
-        input_type="search_document",
-        texts=[text],
-        embedding_types=["float"],
-    ).embeddings.float[0]
-```
-```python
-# $ pip install turbopuffer google-genai
-import os
-import uuid
-from typing import List
-import turbopuffer
-from google.genai import Client
-from google.genai.types import EmbedContentConfig
-
-tpuf = turbopuffer.Turbopuffer(
-    api_key=os.getenv("TURBOPUFFER_API_KEY"), # created here: https://turbopuffer.com/dashboard
-    region="gcp-us-central1", # choose best region: https://turbopuffer.com/docs/regions
-)
-namespace = os.getenv("TURBOPUFFER_NAMESPACE", f"quickstart-{uuid.uuid4().hex[:8]}")
-ns = tpuf.namespace(namespace)
-gemini = Client(api_key=os.environ["GEMINI_API_KEY"])
-
-def embed(text: str) -> List[float]:
-    return gemini.models.embed_content(
-        model="gemini-embedding-001",
-        contents=text,
-        config=EmbedContentConfig(task_type="RETRIEVAL_DOCUMENT"),
-    ).embeddings[0].values
-```
-```python
-# $ pip install turbopuffer openai
-import os
-import uuid
-from typing import List
-import turbopuffer
-from openai import OpenAI
-
-tpuf = turbopuffer.Turbopuffer(
-    api_key=os.getenv("TURBOPUFFER_API_KEY"), # created here: https://turbopuffer.com/dashboard
-    region="gcp-us-central1", # choose best region: https://turbopuffer.com/docs/regions
-)
-namespace = os.getenv("TURBOPUFFER_NAMESPACE", f"quickstart-{uuid.uuid4().hex[:8]}")
-ns = tpuf.namespace(namespace)
-fireworks = OpenAI(
-    api_key=os.environ["FIREWORKS_API_KEY"],
-    base_url="https://api.fireworks.ai/inference/v1",
-)
-
-def embed(text: str) -> List[float]:
-    return fireworks.embeddings.create(
-        model="fireworks/qwen3-embedding-8b",
-        input=text,
-    ).data[0].embedding
-```
-```python
-# $ pip install turbopuffer voyageai
-import os
-import uuid
-from typing import List
-import turbopuffer
-import voyageai
-
-tpuf = turbopuffer.Turbopuffer(
-    api_key=os.getenv("TURBOPUFFER_API_KEY"), # created here: https://turbopuffer.com/dashboard
-    region="gcp-us-central1", # choose best region: https://turbopuffer.com/docs/regions
-)
-namespace = os.getenv("TURBOPUFFER_NAMESPACE", f"quickstart-{uuid.uuid4().hex[:8]}")
-ns = tpuf.namespace(namespace)
-voyage = voyageai.Client(api_key=os.environ["VOYAGE_API_KEY"])
-
-def embed(text: str) -> List[float]:
-    return voyage.embed(
-        [text], model="voyage-4-lite"
-    ).embeddings[0]
-```
-```typescript
-import { Turbopuffer } from "@turbopuffer/turbopuffer";
-
-const tpuf = new Turbopuffer({
-  apiKey: process.env.TURBOPUFFER_API_KEY, // created here: https://turbopuffer.com/dashboard
-  region: "gcp-us-central1", // choose best region: https://turbopuffer.com/docs/regions
-});
-const namespace = process.env.TURBOPUFFER_NAMESPACE ?? `quickstart-${Math.random().toString(36).slice(2, 10)}`;
-const ns = tpuf.namespace(namespace);
-```
-```typescript
-// $ npm install @turbopuffer/turbopuffer cohere-ai
-import { Turbopuffer } from "@turbopuffer/turbopuffer";
-import { CohereClient } from "cohere-ai";
-
-const tpuf = new Turbopuffer({
-  apiKey: process.env.TURBOPUFFER_API_KEY, // created here: https://turbopuffer.com/dashboard
-  region: "gcp-us-central1", // choose best region: https://turbopuffer.com/docs/regions
-});
-const namespace = process.env.TURBOPUFFER_NAMESPACE ?? `quickstart-${Math.random().toString(36).slice(2, 10)}`;
-const ns = tpuf.namespace(namespace);
-const cohere = new CohereClient({ token: process.env.COHERE_API_KEY });
-
-async function embed(text: string): Promise<number[]> {
-  return (await cohere.v2.embed({
-    model: "embed-v4.0",
-    inputType: "search_document",
-    texts: [text],
-    embeddingTypes: ["float"],
-  })).embeddings.float![0];
+// Create an embedding with Cohere.
+// Requires COHERE_API_KEY to be set (https://dashboard.cohere.com/api-keys)
+static List<float> Embed(string text)
+{
+    using var http = new HttpClient();
+    var request = new HttpRequestMessage(HttpMethod.Post, "https://api.cohere.com/v2/embed")
+    {
+        Content = new StringContent(
+            JsonSerializer.Serialize(
+                new
+                {
+                    model = "embed-v4.0",
+                    input_type = "search_document",
+                    texts = new[] { text },
+                    embedding_types = new[] { "float" },
+                }
+            ),
+            Encoding.UTF8,
+            "application/json"
+        ),
+    };
+    request.Headers.Authorization = new AuthenticationHeaderValue(
+        "Bearer",
+        Environment.GetEnvironmentVariable("COHERE_API_KEY")
+    );
+    var response = http.Send(request);
+    response.EnsureSuccessStatusCode();
+    using var doc = JsonDocument.Parse(response.Content.ReadAsStream());
+    return doc
+        .RootElement.GetProperty("embeddings")
+        .GetProperty("float")[0]
+        .EnumerateArray()
+        .Select(v => v.GetSingle())
+        .ToList();
 }
 ```
-```typescript
-// $ npm install @turbopuffer/turbopuffer @google/genai
-import { Turbopuffer } from "@turbopuffer/turbopuffer";
-import { GoogleGenAI } from "@google/genai";
+```cs
+// dotnet add package Turbopuffer
+using System;
+using System.Collections.Generic;
+using System.Linq;
+using System.Net.Http;
+using System.Text;
+using System.Text.Json;
+using Turbopuffer;
 
-const tpuf = new Turbopuffer({
-  apiKey: process.env.TURBOPUFFER_API_KEY, // created here: https://turbopuffer.com/dashboard
-  region: "gcp-us-central1", // choose best region: https://turbopuffer.com/docs/regions
-});
-const namespace = process.env.TURBOPUFFER_NAMESPACE ?? `quickstart-${Math.random().toString(36).slice(2, 10)}`;
-const ns = tpuf.namespace(namespace);
-const gemini = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
+using var tpuf = new TurbopufferClient
+{
+    Region = "gcp-us-central1", // choose best region: https://turbopuffer.com/docs/regions
+};
 
-async function embed(text: string): Promise<number[]> {
-  return (
-    await gemini.models.embedContent({
-      model: "gemini-embedding-001",
-      contents: text,
-      config: { taskType: "RETRIEVAL_DOCUMENT" },
-    })
-  ).embeddings![0].values!;
+var namespaceName =
+    Environment.GetEnvironmentVariable("TURBOPUFFER_NAMESPACE")
+    ?? $"quickstart-{Guid.NewGuid().ToString("N").Substring(0, 8)}";
+var ns = tpuf.Namespace(namespaceName);
+
+// Create an embedding with Gemini.
+// Requires GEMINI_API_KEY to be set (https://aistudio.google.com/app/apikey)
+static List<float> Embed(string text)
+{
+    var apiKey = Environment.GetEnvironmentVariable("GEMINI_API_KEY");
+    using var http = new HttpClient();
+    var request = new HttpRequestMessage(
+        HttpMethod.Post,
+        "https://generativelanguage.googleapis.com/v1beta/models/gemini-embedding-001:embedContent?key="
+            + apiKey
+    )
+    {
+        Content = new StringContent(
+            JsonSerializer.Serialize(
+                new
+                {
+                    model = "models/gemini-embedding-001",
+                    content = new { parts = new[] { new { text } } },
+                    taskType = "RETRIEVAL_DOCUMENT",
+                }
+            ),
+            Encoding.UTF8,
+            "application/json"
+        ),
+    };
+    var response = http.Send(request);
+    response.EnsureSuccessStatusCode();
+    using var doc = JsonDocument.Parse(response.Content.ReadAsStream());
+    return doc
+        .RootElement.GetProperty("embedding")
+        .GetProperty("values")
+        .EnumerateArray()
+        .Select(v => v.GetSingle())
+        .ToList();
 }
 ```
-```typescript
-// $ npm install @turbopuffer/turbopuffer openai
-import { Turbopuffer } from "@turbopuffer/turbopuffer";
-import OpenAI from "openai";
+```cs
+// dotnet add package Turbopuffer
+// dotnet add package OpenAI
+using System;
+using System.ClientModel;
+using System.Collections.Generic;
+using System.Linq;
+using OpenAI;
+using OpenAI.Embeddings;
+using Turbopuffer;
 
-const tpuf = new Turbopuffer({
-  apiKey: process.env.TURBOPUFFER_API_KEY, // created here: https://turbopuffer.com/dashboard
-  region: "gcp-us-central1", // choose best region: https://turbopuffer.com/docs/regions
-});
-const namespace = process.env.TURBOPUFFER_NAMESPACE ?? `quickstart-${Math.random().toString(36).slice(2, 10)}`;
-const ns = tpuf.namespace(namespace);
-const fireworks = new OpenAI({
-  apiKey: process.env.FIREWORKS_API_KEY,
-  baseURL: "https://api.fireworks.ai/inference/v1",
-});
+using var tpuf = new TurbopufferClient
+{
+    Region = "gcp-us-central1", // choose best region: https://turbopuffer.com/docs/regions
+};
 
-async function embed(text: string): Promise<number[]> {
-  return (
-    await fireworks.embeddings.create({
-      model: "fireworks/qwen3-embedding-8b",
-      input: text,
-      encoding_format: "float",
-    })
-  ).data[0].embedding;
+var namespaceName =
+    Environment.GetEnvironmentVariable("TURBOPUFFER_NAMESPACE")
+    ?? $"quickstart-{Guid.NewGuid().ToString("N").Substring(0, 8)}";
+var ns = tpuf.Namespace(namespaceName);
+
+// Create an embedding with Qwen on Fireworks.
+// Requires FIREWORKS_API_KEY to be set (https://fireworks.ai/settings/users/api-keys)
+static List<float> Embed(string text)
+{
+    var client = new EmbeddingClient(
+        "fireworks/qwen3-embedding-8b",
+        new ApiKeyCredential(Environment.GetEnvironmentVariable("FIREWORKS_API_KEY")!),
+        new OpenAIClientOptions { Endpoint = new Uri("https://api.fireworks.ai/inference/v1") }
+    );
+    return [.. client.GenerateEmbedding(text).Value.ToFloats().Span];
 }
 ```
-```typescript
-// $ npm install @turbopuffer/turbopuffer voyageai
-import { Turbopuffer } from "@turbopuffer/turbopuffer";
-import { VoyageAIClient } from "voyageai";
+```cs
+// dotnet add package Turbopuffer
+// dotnet add package OpenAI
+using System;
+using System.ClientModel;
+using System.Collections.Generic;
+using System.Linq;
+using OpenAI;
+using OpenAI.Embeddings;
+using Turbopuffer;
 
-const tpuf = new Turbopuffer({
-  apiKey: process.env.TURBOPUFFER_API_KEY, // created here: https://turbopuffer.com/dashboard
-  region: "gcp-us-central1", // choose best region: https://turbopuffer.com/docs/regions
-});
-const namespace = process.env.TURBOPUFFER_NAMESPACE ?? `quickstart-${Math.random().toString(36).slice(2, 10)}`;
-const ns = tpuf.namespace(namespace);
-const voyage = new VoyageAIClient({
-  apiKey: process.env.VOYAGE_API_KEY,
-});
+using var tpuf = new TurbopufferClient
+{
+    Region = "gcp-us-central1", // choose best region: https://turbopuffer.com/docs/regions
+};
 
-async function embed(text: string): Promise<number[]> {
-  return (await voyage.embed({
-    input: text,
-    model: "voyage-4-lite",
-  })).data[0].embedding;
+var namespaceName =
+    Environment.GetEnvironmentVariable("TURBOPUFFER_NAMESPACE")
+    ?? $"quickstart-{Guid.NewGuid().ToString("N").Substring(0, 8)}";
+var ns = tpuf.Namespace(namespaceName);
+
+// Create an embedding with Voyage.
+// Requires VOYAGE_API_KEY to be set:
+// https://dashboard.voyageai.com/organization/api-keys
+static List<float> Embed(string text)
+{
+    var client = new EmbeddingClient(
+        "voyage-4-lite",
+        new ApiKeyCredential(Environment.GetEnvironmentVariable("VOYAGE_API_KEY")!),
+        new OpenAIClientOptions { Endpoint = new Uri("https://api.voyageai.com/v1") }
+    );
+    return [.. client.GenerateEmbedding(text).Value.ToFloats().Span];
 }
 ```
 ```go
@@ -709,201 +675,133 @@ public class VoyageConnect {
   }
 }
 ```
-```cs
-// dotnet add package Turbopuffer
-using System;
-using Turbopuffer;
+```python
+import os
+import uuid
+import turbopuffer
 
-using var tpuf = new TurbopufferClient
-{
-    // API tokens are created in the dashboard: https://turbopuffer.com/dashboard
-    Region = "gcp-us-central1", // choose best region: https://turbopuffer.com/docs/regions
-};
-
-var namespaceName =
-    Environment.GetEnvironmentVariable("TURBOPUFFER_NAMESPACE")
-    ?? $"quickstart-{Guid.NewGuid().ToString("N").Substring(0, 8)}";
-var ns = tpuf.Namespace(namespaceName);
+tpuf = turbopuffer.Turbopuffer(
+    api_key=os.getenv("TURBOPUFFER_API_KEY"), # created here: https://turbopuffer.com/dashboard
+    region="gcp-us-central1", # choose best region: https://turbopuffer.com/docs/regions
+)
+namespace = os.getenv("TURBOPUFFER_NAMESPACE", f"quickstart-{uuid.uuid4().hex[:8]}")
+ns = tpuf.namespace(namespace)
 ```
-```cs
-// dotnet add package Turbopuffer
-using System;
-using System.Collections.Generic;
-using System.Linq;
-using System.Net.Http;
-using System.Net.Http.Headers;
-using System.Text;
-using System.Text.Json;
-using Turbopuffer;
+```python
+# $ pip install turbopuffer sentence-transformers
+import os
+import uuid
+from typing import List
+import turbopuffer
+from sentence_transformers import SentenceTransformer
 
-using var tpuf = new TurbopufferClient
-{
-    Region = "gcp-us-central1", // choose best region: https://turbopuffer.com/docs/regions
-};
+tpuf = turbopuffer.Turbopuffer(
+    api_key=os.getenv("TURBOPUFFER_API_KEY"), # created here: https://turbopuffer.com/dashboard
+    region="gcp-us-central1", # choose best region: https://turbopuffer.com/docs/regions
+)
+namespace = os.getenv("TURBOPUFFER_NAMESPACE", f"quickstart-{uuid.uuid4().hex[:8]}")
+ns = tpuf.namespace(namespace)
 
-var namespaceName =
-    Environment.GetEnvironmentVariable("TURBOPUFFER_NAMESPACE")
-    ?? $"quickstart-{Guid.NewGuid().ToString("N").Substring(0, 8)}";
-var ns = tpuf.Namespace(namespaceName);
+# Local embeddings with BGE — no API key needed.
+# Model is downloaded on first run (~130 MB).
+bge = SentenceTransformer("BAAI/bge-small-en-v1.5")
 
-// Create an embedding with Cohere.
-// Requires COHERE_API_KEY to be set (https://dashboard.cohere.com/api-keys)
-static List<float> Embed(string text)
-{
-    using var http = new HttpClient();
-    var request = new HttpRequestMessage(HttpMethod.Post, "https://api.cohere.com/v2/embed")
-    {
-        Content = new StringContent(
-            JsonSerializer.Serialize(
-                new
-                {
-                    model = "embed-v4.0",
-                    input_type = "search_document",
-                    texts = new[] { text },
-                    embedding_types = new[] { "float" },
-                }
-            ),
-            Encoding.UTF8,
-            "application/json"
-        ),
-    };
-    request.Headers.Authorization = new AuthenticationHeaderValue(
-        "Bearer",
-        Environment.GetEnvironmentVariable("COHERE_API_KEY")
-    );
-    var response = http.Send(request);
-    response.EnsureSuccessStatusCode();
-    using var doc = JsonDocument.Parse(response.Content.ReadAsStream());
-    return doc
-        .RootElement.GetProperty("embeddings")
-        .GetProperty("float")[0]
-        .EnumerateArray()
-        .Select(v => v.GetSingle())
-        .ToList();
-}
+def embed(text: str) -> List[float]:
+    return bge.encode(text).tolist()
 ```
-```cs
-// dotnet add package Turbopuffer
-using System;
-using System.Collections.Generic;
-using System.Linq;
-using System.Net.Http;
-using System.Text;
-using System.Text.Json;
-using Turbopuffer;
+```python
+# $ pip install turbopuffer cohere
+import os
+import uuid
+from typing import List
+import turbopuffer
+from cohere import ClientV2
 
-using var tpuf = new TurbopufferClient
-{
-    Region = "gcp-us-central1", // choose best region: https://turbopuffer.com/docs/regions
-};
+tpuf = turbopuffer.Turbopuffer(
+    api_key=os.getenv("TURBOPUFFER_API_KEY"), # created here: https://turbopuffer.com/dashboard
+    region="gcp-us-central1", # choose best region: https://turbopuffer.com/docs/regions
+)
+namespace = os.getenv("TURBOPUFFER_NAMESPACE", f"quickstart-{uuid.uuid4().hex[:8]}")
+ns = tpuf.namespace(namespace)
+cohere = ClientV2(api_key=os.environ["COHERE_API_KEY"])
 
-var namespaceName =
-    Environment.GetEnvironmentVariable("TURBOPUFFER_NAMESPACE")
-    ?? $"quickstart-{Guid.NewGuid().ToString("N").Substring(0, 8)}";
-var ns = tpuf.Namespace(namespaceName);
-
-// Create an embedding with Gemini.
-// Requires GEMINI_API_KEY to be set (https://aistudio.google.com/app/apikey)
-static List<float> Embed(string text)
-{
-    var apiKey = Environment.GetEnvironmentVariable("GEMINI_API_KEY");
-    using var http = new HttpClient();
-    var request = new HttpRequestMessage(
-        HttpMethod.Post,
-        "https://generativelanguage.googleapis.com/v1beta/models/gemini-embedding-001:embedContent?key="
-            + apiKey
-    )
-    {
-        Content = new StringContent(
-            JsonSerializer.Serialize(
-                new
-                {
-                    model = "models/gemini-embedding-001",
-                    content = new { parts = new[] { new { text } } },
-                    taskType = "RETRIEVAL_DOCUMENT",
-                }
-            ),
-            Encoding.UTF8,
-            "application/json"
-        ),
-    };
-    var response = http.Send(request);
-    response.EnsureSuccessStatusCode();
-    using var doc = JsonDocument.Parse(response.Content.ReadAsStream());
-    return doc
-        .RootElement.GetProperty("embedding")
-        .GetProperty("values")
-        .EnumerateArray()
-        .Select(v => v.GetSingle())
-        .ToList();
-}
+def embed(text: str) -> List[float]:
+    return cohere.embed(
+        model="embed-v4.0",
+        input_type="search_document",
+        texts=[text],
+        embedding_types=["float"],
+    ).embeddings.float[0]
 ```
-```cs
-// dotnet add package Turbopuffer
-// dotnet add package OpenAI
-using System;
-using System.ClientModel;
-using System.Collections.Generic;
-using System.Linq;
-using OpenAI;
-using OpenAI.Embeddings;
-using Turbopuffer;
+```python
+# $ pip install turbopuffer google-genai
+import os
+import uuid
+from typing import List
+import turbopuffer
+from google.genai import Client
+from google.genai.types import EmbedContentConfig
 
-using var tpuf = new TurbopufferClient
-{
-    Region = "gcp-us-central1", // choose best region: https://turbopuffer.com/docs/regions
-};
+tpuf = turbopuffer.Turbopuffer(
+    api_key=os.getenv("TURBOPUFFER_API_KEY"), # created here: https://turbopuffer.com/dashboard
+    region="gcp-us-central1", # choose best region: https://turbopuffer.com/docs/regions
+)
+namespace = os.getenv("TURBOPUFFER_NAMESPACE", f"quickstart-{uuid.uuid4().hex[:8]}")
+ns = tpuf.namespace(namespace)
+gemini = Client(api_key=os.environ["GEMINI_API_KEY"])
 
-var namespaceName =
-    Environment.GetEnvironmentVariable("TURBOPUFFER_NAMESPACE")
-    ?? $"quickstart-{Guid.NewGuid().ToString("N").Substring(0, 8)}";
-var ns = tpuf.Namespace(namespaceName);
-
-// Create an embedding with Qwen on Fireworks.
-// Requires FIREWORKS_API_KEY to be set (https://fireworks.ai/settings/users/api-keys)
-static List<float> Embed(string text)
-{
-    var client = new EmbeddingClient(
-        "fireworks/qwen3-embedding-8b",
-        new ApiKeyCredential(Environment.GetEnvironmentVariable("FIREWORKS_API_KEY")!),
-        new OpenAIClientOptions { Endpoint = new Uri("https://api.fireworks.ai/inference/v1") }
-    );
-    return [.. client.GenerateEmbedding(text).Value.ToFloats().Span];
-}
+def embed(text: str) -> List[float]:
+    return gemini.models.embed_content(
+        model="gemini-embedding-001",
+        contents=text,
+        config=EmbedContentConfig(task_type="RETRIEVAL_DOCUMENT"),
+    ).embeddings[0].values
 ```
-```cs
-// dotnet add package Turbopuffer
-// dotnet add package OpenAI
-using System;
-using System.ClientModel;
-using System.Collections.Generic;
-using System.Linq;
-using OpenAI;
-using OpenAI.Embeddings;
-using Turbopuffer;
+```python
+# $ pip install turbopuffer openai
+import os
+import uuid
+from typing import List
+import turbopuffer
+from openai import OpenAI
 
-using var tpuf = new TurbopufferClient
-{
-    Region = "gcp-us-central1", // choose best region: https://turbopuffer.com/docs/regions
-};
+tpuf = turbopuffer.Turbopuffer(
+    api_key=os.getenv("TURBOPUFFER_API_KEY"), # created here: https://turbopuffer.com/dashboard
+    region="gcp-us-central1", # choose best region: https://turbopuffer.com/docs/regions
+)
+namespace = os.getenv("TURBOPUFFER_NAMESPACE", f"quickstart-{uuid.uuid4().hex[:8]}")
+ns = tpuf.namespace(namespace)
+fireworks = OpenAI(
+    api_key=os.environ["FIREWORKS_API_KEY"],
+    base_url="https://api.fireworks.ai/inference/v1",
+)
 
-var namespaceName =
-    Environment.GetEnvironmentVariable("TURBOPUFFER_NAMESPACE")
-    ?? $"quickstart-{Guid.NewGuid().ToString("N").Substring(0, 8)}";
-var ns = tpuf.Namespace(namespaceName);
+def embed(text: str) -> List[float]:
+    return fireworks.embeddings.create(
+        model="fireworks/qwen3-embedding-8b",
+        input=text,
+    ).data[0].embedding
+```
+```python
+# $ pip install turbopuffer voyageai
+import os
+import uuid
+from typing import List
+import turbopuffer
+import voyageai
 
-// Create an embedding with Voyage.
-// Requires VOYAGE_API_KEY to be set:
-// https://dashboard.voyageai.com/organization/api-keys
-static List<float> Embed(string text)
-{
-    var client = new EmbeddingClient(
-        "voyage-4-lite",
-        new ApiKeyCredential(Environment.GetEnvironmentVariable("VOYAGE_API_KEY")!),
-        new OpenAIClientOptions { Endpoint = new Uri("https://api.voyageai.com/v1") }
-    );
-    return [.. client.GenerateEmbedding(text).Value.ToFloats().Span];
-}
+tpuf = turbopuffer.Turbopuffer(
+    api_key=os.getenv("TURBOPUFFER_API_KEY"), # created here: https://turbopuffer.com/dashboard
+    region="gcp-us-central1", # choose best region: https://turbopuffer.com/docs/regions
+)
+namespace = os.getenv("TURBOPUFFER_NAMESPACE", f"quickstart-{uuid.uuid4().hex[:8]}")
+ns = tpuf.namespace(namespace)
+voyage = voyageai.Client(api_key=os.environ["VOYAGE_API_KEY"])
+
+def embed(text: str) -> List[float]:
+    return voyage.embed(
+        [text], model="voyage-4-lite"
+    ).embeddings[0]
 ```
 ```ruby
 require "turbopuffer"
@@ -989,6 +887,302 @@ def embed(text)
     .data[0].embedding
 end
 ```
+```rust
+use std::time::{SystemTime, UNIX_EPOCH};
+
+use turbopuffer::Client;
+
+#[tokio::main]
+async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    // The API key is read from TURBOPUFFER_API_KEY. Create one here: https://turbopuffer.com/dashboard
+    let client = Client::builder()
+        .region("gcp-us-central1") // choose best region: https://turbopuffer.com/docs/regions
+        .build()?;
+    let now = SystemTime::now().duration_since(UNIX_EPOCH)?.as_nanos();
+    let namespace =
+        std::env::var("TURBOPUFFER_NAMESPACE").unwrap_or_else(|_| format!("quickstart-{now}"));
+    let ns = client.namespace(&namespace);
+```
+```rust
+// $ cargo add turbopuffer tokio reqwest --features tokio/full,reqwest/json
+use std::sync::LazyLock;
+use std::time::{SystemTime, UNIX_EPOCH};
+
+use turbopuffer::Client;
+use turbopuffer::serde_json::{self, Value, json};
+
+// One client for every request, so that connections are reused.
+static HTTP: LazyLock<reqwest::Client> = LazyLock::new(reqwest::Client::new);
+
+/// Create an embedding with Cohere.
+/// Requires `COHERE_API_KEY` to be set (<https://dashboard.cohere.com/api-keys>).
+async fn embed(text: &str) -> Result<Vec<f32>, Box<dyn std::error::Error>> {
+    let api_key = std::env::var("COHERE_API_KEY").map_err(|_| "COHERE_API_KEY is not set")?;
+    let mut response: Value = HTTP
+        .post("https://api.cohere.com/v2/embed")
+        .bearer_auth(api_key)
+        .json(&json!({
+            "model": "embed-v4.0",
+            "input_type": "search_document",
+            "texts": [text],
+            "embedding_types": ["float"],
+        }))
+        .send()
+        .await?
+        .error_for_status()?
+        .json()
+        .await?;
+    let embedding = response
+        .pointer_mut("/embeddings/float/0")
+        .ok_or("unexpected response from Cohere")?
+        .take();
+    Ok(serde_json::from_value(embedding)?)
+}
+
+#[tokio::main]
+async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    // The API key is read from TURBOPUFFER_API_KEY. Create one here: https://turbopuffer.com/dashboard
+    let client = Client::builder()
+        .region("gcp-us-central1") // choose best region: https://turbopuffer.com/docs/regions
+        .build()?;
+    let now = SystemTime::now().duration_since(UNIX_EPOCH)?.as_nanos();
+    let namespace =
+        std::env::var("TURBOPUFFER_NAMESPACE").unwrap_or_else(|_| format!("quickstart-{now}"));
+    let ns = client.namespace(&namespace);
+```
+```rust
+// $ cargo add turbopuffer tokio reqwest --features tokio/full,reqwest/json
+use std::sync::LazyLock;
+use std::time::{SystemTime, UNIX_EPOCH};
+
+use turbopuffer::Client;
+use turbopuffer::serde_json::{self, Value, json};
+
+// One client for every request, so that connections are reused.
+static HTTP: LazyLock<reqwest::Client> = LazyLock::new(reqwest::Client::new);
+
+/// Create an embedding with Gemini.
+/// Requires `GEMINI_API_KEY` to be set (<https://aistudio.google.com/app/apikey>).
+async fn embed(text: &str) -> Result<Vec<f32>, Box<dyn std::error::Error>> {
+    let api_key = std::env::var("GEMINI_API_KEY").map_err(|_| "GEMINI_API_KEY is not set")?;
+    let mut response: Value = HTTP
+        .post("https://generativelanguage.googleapis.com/v1beta/models/gemini-embedding-001:embedContent")
+        .header("x-goog-api-key", api_key)
+        .json(&json!({
+            "model": "models/gemini-embedding-001",
+            "content": { "parts": [{ "text": text }] },
+            "taskType": "RETRIEVAL_DOCUMENT",
+        }))
+        .send()
+        .await?
+        .error_for_status()?
+        .json()
+        .await?;
+    let embedding = response
+        .pointer_mut("/embedding/values")
+        .ok_or("unexpected response from Gemini")?
+        .take();
+    Ok(serde_json::from_value(embedding)?)
+}
+
+#[tokio::main]
+async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    // The API key is read from TURBOPUFFER_API_KEY. Create one here: https://turbopuffer.com/dashboard
+    let client = Client::builder()
+        .region("gcp-us-central1") // choose best region: https://turbopuffer.com/docs/regions
+        .build()?;
+    let now = SystemTime::now().duration_since(UNIX_EPOCH)?.as_nanos();
+    let namespace =
+        std::env::var("TURBOPUFFER_NAMESPACE").unwrap_or_else(|_| format!("quickstart-{now}"));
+    let ns = client.namespace(&namespace);
+```
+```rust
+// $ cargo add turbopuffer tokio reqwest --features tokio/full,reqwest/json
+use std::sync::LazyLock;
+use std::time::{SystemTime, UNIX_EPOCH};
+
+use turbopuffer::Client;
+use turbopuffer::serde_json::{self, Value, json};
+
+// One client for every request, so that connections are reused.
+static HTTP: LazyLock<reqwest::Client> = LazyLock::new(reqwest::Client::new);
+
+/// Create an embedding with Qwen on Fireworks.
+/// Requires `FIREWORKS_API_KEY` to be set (<https://fireworks.ai/settings/users/api-keys>).
+async fn embed(text: &str) -> Result<Vec<f32>, Box<dyn std::error::Error>> {
+    let api_key = std::env::var("FIREWORKS_API_KEY").map_err(|_| "FIREWORKS_API_KEY is not set")?;
+    let mut response: Value = HTTP
+        .post("https://api.fireworks.ai/inference/v1/embeddings")
+        .bearer_auth(api_key)
+        .json(&json!({ "model": "fireworks/qwen3-embedding-8b", "input": text }))
+        .send()
+        .await?
+        .error_for_status()?
+        .json()
+        .await?;
+    let embedding = response
+        .pointer_mut("/data/0/embedding")
+        .ok_or("unexpected response from Fireworks")?
+        .take();
+    Ok(serde_json::from_value(embedding)?)
+}
+
+#[tokio::main]
+async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    // The API key is read from TURBOPUFFER_API_KEY. Create one here: https://turbopuffer.com/dashboard
+    let client = Client::builder()
+        .region("gcp-us-central1") // choose best region: https://turbopuffer.com/docs/regions
+        .build()?;
+    let now = SystemTime::now().duration_since(UNIX_EPOCH)?.as_nanos();
+    let namespace =
+        std::env::var("TURBOPUFFER_NAMESPACE").unwrap_or_else(|_| format!("quickstart-{now}"));
+    let ns = client.namespace(&namespace);
+```
+```rust
+// $ cargo add turbopuffer tokio reqwest --features tokio/full,reqwest/json
+use std::sync::LazyLock;
+use std::time::{SystemTime, UNIX_EPOCH};
+
+use turbopuffer::Client;
+use turbopuffer::serde_json::{self, Value, json};
+
+// One client for every request, so that connections are reused.
+static HTTP: LazyLock<reqwest::Client> = LazyLock::new(reqwest::Client::new);
+
+/// Create an embedding with Voyage.
+/// Requires `VOYAGE_API_KEY` to be set (<https://dashboard.voyageai.com/organization/api-keys>).
+async fn embed(text: &str) -> Result<Vec<f32>, Box<dyn std::error::Error>> {
+    let api_key = std::env::var("VOYAGE_API_KEY").map_err(|_| "VOYAGE_API_KEY is not set")?;
+    let mut response: Value = HTTP
+        .post("https://api.voyageai.com/v1/embeddings")
+        .bearer_auth(api_key)
+        .json(&json!({ "model": "voyage-4-lite", "input": text }))
+        .send()
+        .await?
+        .error_for_status()?
+        .json()
+        .await?;
+    let embedding = response
+        .pointer_mut("/data/0/embedding")
+        .ok_or("unexpected response from Voyage")?
+        .take();
+    Ok(serde_json::from_value(embedding)?)
+}
+
+#[tokio::main]
+async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    // The API key is read from TURBOPUFFER_API_KEY. Create one here: https://turbopuffer.com/dashboard
+    let client = Client::builder()
+        .region("gcp-us-central1") // choose best region: https://turbopuffer.com/docs/regions
+        .build()?;
+    let now = SystemTime::now().duration_since(UNIX_EPOCH)?.as_nanos();
+    let namespace =
+        std::env::var("TURBOPUFFER_NAMESPACE").unwrap_or_else(|_| format!("quickstart-{now}"));
+    let ns = client.namespace(&namespace);
+```
+```typescript
+import { Turbopuffer } from "@turbopuffer/turbopuffer";
+
+const tpuf = new Turbopuffer({
+  apiKey: process.env.TURBOPUFFER_API_KEY, // created here: https://turbopuffer.com/dashboard
+  region: "gcp-us-central1", // choose best region: https://turbopuffer.com/docs/regions
+});
+const namespace = process.env.TURBOPUFFER_NAMESPACE ?? `quickstart-${Math.random().toString(36).slice(2, 10)}`;
+const ns = tpuf.namespace(namespace);
+```
+```typescript
+// $ npm install @turbopuffer/turbopuffer cohere-ai
+import { Turbopuffer } from "@turbopuffer/turbopuffer";
+import { CohereClient } from "cohere-ai";
+
+const tpuf = new Turbopuffer({
+  apiKey: process.env.TURBOPUFFER_API_KEY, // created here: https://turbopuffer.com/dashboard
+  region: "gcp-us-central1", // choose best region: https://turbopuffer.com/docs/regions
+});
+const namespace = process.env.TURBOPUFFER_NAMESPACE ?? `quickstart-${Math.random().toString(36).slice(2, 10)}`;
+const ns = tpuf.namespace(namespace);
+const cohere = new CohereClient({ token: process.env.COHERE_API_KEY });
+
+async function embed(text: string): Promise<number[]> {
+  return (await cohere.v2.embed({
+    model: "embed-v4.0",
+    inputType: "search_document",
+    texts: [text],
+    embeddingTypes: ["float"],
+  })).embeddings.float![0];
+}
+```
+```typescript
+// $ npm install @turbopuffer/turbopuffer @google/genai
+import { Turbopuffer } from "@turbopuffer/turbopuffer";
+import { GoogleGenAI } from "@google/genai";
+
+const tpuf = new Turbopuffer({
+  apiKey: process.env.TURBOPUFFER_API_KEY, // created here: https://turbopuffer.com/dashboard
+  region: "gcp-us-central1", // choose best region: https://turbopuffer.com/docs/regions
+});
+const namespace = process.env.TURBOPUFFER_NAMESPACE ?? `quickstart-${Math.random().toString(36).slice(2, 10)}`;
+const ns = tpuf.namespace(namespace);
+const gemini = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
+
+async function embed(text: string): Promise<number[]> {
+  return (
+    await gemini.models.embedContent({
+      model: "gemini-embedding-001",
+      contents: text,
+      config: { taskType: "RETRIEVAL_DOCUMENT" },
+    })
+  ).embeddings![0].values!;
+}
+```
+```typescript
+// $ npm install @turbopuffer/turbopuffer openai
+import { Turbopuffer } from "@turbopuffer/turbopuffer";
+import OpenAI from "openai";
+
+const tpuf = new Turbopuffer({
+  apiKey: process.env.TURBOPUFFER_API_KEY, // created here: https://turbopuffer.com/dashboard
+  region: "gcp-us-central1", // choose best region: https://turbopuffer.com/docs/regions
+});
+const namespace = process.env.TURBOPUFFER_NAMESPACE ?? `quickstart-${Math.random().toString(36).slice(2, 10)}`;
+const ns = tpuf.namespace(namespace);
+const fireworks = new OpenAI({
+  apiKey: process.env.FIREWORKS_API_KEY,
+  baseURL: "https://api.fireworks.ai/inference/v1",
+});
+
+async function embed(text: string): Promise<number[]> {
+  return (
+    await fireworks.embeddings.create({
+      model: "fireworks/qwen3-embedding-8b",
+      input: text,
+      encoding_format: "float",
+    })
+  ).data[0].embedding;
+}
+```
+```typescript
+// $ npm install @turbopuffer/turbopuffer voyageai
+import { Turbopuffer } from "@turbopuffer/turbopuffer";
+import { VoyageAIClient } from "voyageai";
+
+const tpuf = new Turbopuffer({
+  apiKey: process.env.TURBOPUFFER_API_KEY, // created here: https://turbopuffer.com/dashboard
+  region: "gcp-us-central1", // choose best region: https://turbopuffer.com/docs/regions
+});
+const namespace = process.env.TURBOPUFFER_NAMESPACE ?? `quickstart-${Math.random().toString(36).slice(2, 10)}`;
+const ns = tpuf.namespace(namespace);
+const voyage = new VoyageAIClient({
+  apiKey: process.env.VOYAGE_API_KEY,
+});
+
+async function embed(text: string): Promise<number[]> {
+  return (await voyage.embed({
+    input: text,
+    model: "voyage-4-lite",
+  })).data[0].embedding;
+}
+```
 <!-- /multilang -->
 
 ## Write
@@ -1019,64 +1213,37 @@ curl $TPUF_URL/v2/namespaces/$TPUF_NAMESPACE \
    "distance_metric": "cosine_distance"
  }'
 ```
-```python
-ns.write(
-    upsert_rows=[
+```cs
+await ns.Write(
+    new NamespaceWriteParams
+    {
+        UpsertRows =
+        [
+            new Row()
+                .Set("id", 1)
+                .Set("category", new[] { "mammal" })
+                .Set("public", true)
+                .Set("text", "walrus narwhal"),
+            new Row()
+                .Set("id", 2)
+                .Set("category", new[] { "fish" })
+                .Set("public", false)
+                .Set("text", "pufferfish clownfish swordfish"),
+        ],
+        DistanceMetric = DistanceMetric.CosineDistance,
+        Schema = new Dictionary<string, AttributeSchemaConfig>
         {
-            'id': 1,
-            'category': ["mammal"],
-            'public': True,
-            'text': "walrus narwhal",
-        },
-        {
-            'id': 2,
-            'category': ["fish"],
-            'public': False,
-            'text': "pufferfish clownfish swordfish",
-        },
-    ],
-    distance_metric='cosine_distance',
-    schema={
-        "text": {
-            "type": "string",
-            "full_text_search": True,
-            "regex": True,
-            "embed": {"model": "nvidia/nemotron-3-embed-8b", "dims": 1024},
-        },
-        "category": {
-            "type": "[]string",
-            "full_text_search": True,
+            ["text"] = new AttributeSchemaConfig
+            {
+                Type = "string",
+                FullTextSearch = true,
+                Regex = true,
+                Embed = new AttributeEmbedConfig { Model = "nvidia/nemotron-3-embed-8b", Dims = 1024 },
+            },
+            ["category"] = new AttributeSchemaConfig { Type = "[]string", FullTextSearch = true },
         },
     }
-)
-```
-```typescript
-await ns.write({
-  upsert_rows: [
-    {
-      id: 1,
-      category: ["mammal"],
-      public: true,
-      text: "walrus narwhal",
-    },
-    {
-      id: 2,
-      category: ["fish"],
-      public: false,
-      text: "pufferfish clownfish swordfish",
-    },
-  ],
-  distance_metric: "cosine_distance",
-  schema: {
-    text: {
-      type: "string",
-      full_text_search: true,
-      regex: true,
-      embed: { model: "nvidia/nemotron-3-embed-8b", dims: 1024 },
-    },
-    category: { type: "[]string", full_text_search: true },
-  },
-});
+);
 ```
 ```go
 	_, err := ns.Write(ctx, turbopuffer.NamespaceWriteParams{
@@ -1093,8 +1260,8 @@ await ns.write({
 			},
 		},
 		DistanceMetric: turbopuffer.DistanceMetricCosineDistance,
-		Schema: map[string]turbopuffer.AttributeSchemaConfigParam{
-			"text": {
+		Schema: map[string]turbopuffer.AttributeSchemaParam{
+			"text": {AttributeSchemaConfig: &turbopuffer.AttributeSchemaConfigParam{
 				Type:           "string",
 				FullTextSearch: &turbopuffer.FullTextSearchConfigParam{},
 				Regex:          param.NewOpt(true),
@@ -1102,11 +1269,11 @@ await ns.write({
 					Model: "nvidia/nemotron-3-embed-8b",
 					Dims:  param.NewOpt[int64](1024),
 				},
-			},
-			"category": {
+			}},
+			"category": {AttributeSchemaConfig: &turbopuffer.AttributeSchemaConfigParam{
 				Type:           "[]string",
 				FullTextSearch: &turbopuffer.FullTextSearchConfigParam{},
-			},
+			}},
 		},
 	})
 	if err != nil {
@@ -1161,37 +1328,36 @@ await ns.write({
         .build()
     );
 ```
-```cs
-await ns.Write(
-    new NamespaceWriteParams
-    {
-        UpsertRows =
-        [
-            new Row()
-                .Set("id", 1)
-                .Set("category", new[] { "mammal" })
-                .Set("public", true)
-                .Set("text", "walrus narwhal"),
-            new Row()
-                .Set("id", 2)
-                .Set("category", new[] { "fish" })
-                .Set("public", false)
-                .Set("text", "pufferfish clownfish swordfish"),
-        ],
-        DistanceMetric = DistanceMetric.CosineDistance,
-        Schema = new Dictionary<string, AttributeSchemaConfig>
+```python
+ns.write(
+    upsert_rows=[
         {
-            ["text"] = new AttributeSchemaConfig
-            {
-                Type = "string",
-                FullTextSearch = true,
-                Regex = true,
-                Embed = new AttributeEmbedConfig { Model = "nvidia/nemotron-3-embed-8b", Dims = 1024 },
-            },
-            ["category"] = new AttributeSchemaConfig { Type = "[]string", FullTextSearch = true },
+            'id': 1,
+            'category': ["mammal"],
+            'public': True,
+            'text': "walrus narwhal",
+        },
+        {
+            'id': 2,
+            'category': ["fish"],
+            'public': False,
+            'text': "pufferfish clownfish swordfish",
+        },
+    ],
+    distance_metric='cosine_distance',
+    schema={
+        "text": {
+            "type": "string",
+            "full_text_search": True,
+            "regex": True,
+            "embed": {"model": "nvidia/nemotron-3-embed-8b", "dims": 1024},
+        },
+        "category": {
+            "type": "[]string",
+            "full_text_search": True,
         },
     }
-);
+)
 ```
 ```ruby
 ns.write(
@@ -1212,6 +1378,65 @@ ns.write(
     category: { type: "[]string", full_text_search: true },
   },
 )
+```
+```rust
+    use turbopuffer::types::{AttributeEmbedConfig, AttributeSchemaConfig, DistanceMetric, Row};
+
+    ns.write()
+        .upsert_rows([
+            Row::new(1)
+                .insert("category", ["mammal"])
+                .insert("public", true)
+                .insert("text", "walrus narwhal"),
+            Row::new(2)
+                .insert("category", ["fish"])
+                .insert("public", false)
+                .insert("text", "pufferfish clownfish swordfish"),
+        ])
+        .distance_metric(DistanceMetric::CosineDistance)
+        .schema([
+            (
+                "text",
+                AttributeSchemaConfig::new("string")
+                    .full_text_search(true)
+                    .regex(true)
+                    .embed(AttributeEmbedConfig::new("nvidia/nemotron-3-embed-8b").dims(1024)),
+            ),
+            (
+                "category",
+                AttributeSchemaConfig::new("[]string").full_text_search(true),
+            ),
+        ])
+        .send()
+        .await?;
+```
+```typescript
+await ns.write({
+  upsert_rows: [
+    {
+      id: 1,
+      category: ["mammal"],
+      public: true,
+      text: "walrus narwhal",
+    },
+    {
+      id: 2,
+      category: ["fish"],
+      public: false,
+      text: "pufferfish clownfish swordfish",
+    },
+  ],
+  distance_metric: "cosine_distance",
+  schema: {
+    text: {
+      type: "string",
+      full_text_search: true,
+      regex: true,
+      embed: { model: "nvidia/nemotron-3-embed-8b", dims: 1024 },
+    },
+    category: { type: "[]string", full_text_search: true },
+  },
+});
 ```
 <!-- /multilang -->
 
@@ -1262,56 +1487,46 @@ curl $TPUF_URL/v2/namespaces/$TPUF_NAMESPACE/query \
    "filters": ["text", "Regex", "\\w+fish"]
  }'
 ```
-```python
-# Vector search with a filter
-print(ns.query(
-    rank_by=("text", "ANN", ("Embed", "arctic sea mammal")),
-    limit=10,
-    filters=("public", "Eq", True),
-))
-
-# Full-text search with boosted category field
-print(ns.query(
-    limit=10,
-    filters=("public", "Eq", True),
-    rank_by=("Sum", [
-        ("Product", 2, ("category", "BM25", "mammal")),
-        ("text", "BM25", "quick walrus"),
-    ]),
-))
-
-# Regex filter — matches "pufferfish", "swordfish", "clownfish"
-print(ns.query(
-    limit=10,
-    filters=("text", "Regex", "\\w+fish"),
-))
-```
-```typescript
+```cs
 // Vector search with a filter
-let result = await ns.query({
-  rank_by: ["text", "ANN", ["Embed", "arctic sea mammal"]],
-  limit: 10,
-  filters: ["public", "Eq", true],
-});
-console.log(result.rows);
+var queryResult = await ns.Query(
+    new NamespaceQueryParams
+    {
+        RankBy = RankBy.Ann("text", Expr.Embed("arctic sea mammal")),
+        Limit = 10,
+        Filters = Filter.Eq("public", true),
+    }
+);
+foreach (var row in queryResult.GetRows())
+{
+    Console.WriteLine(row);
+}
 
 // Full-text search with boosted category field
-result = await ns.query({
-  limit: 10,
-  filters: ["public", "Eq", true],
-  rank_by: ["Sum", [
-    ["Product", 2, ["category", "BM25", "mammal"]],
-    ["text", "BM25", "quick walrus"],
-  ]],
-});
-console.log(result.rows);
+var ftsResult = await ns.Query(
+    new NamespaceQueryParams
+    {
+        Limit = 10,
+        Filters = Filter.Eq("public", true),
+        RankBy = RankByText.Sum(
+            RankByText.Product(2, RankByText.BM25("category", "mammal")),
+            RankByText.BM25("text", "quick walrus")
+        ),
+    }
+);
+foreach (var row in ftsResult.GetRows())
+{
+    Console.WriteLine(row);
+}
 
 // Regex filter — matches "pufferfish", "swordfish", "clownfish"
-result = await ns.query({
-  limit: 10,
-  filters: ["text", "Regex", "\\w+fish"],
-});
-console.log(result.rows);
+var regexResult = await ns.Query(
+    new NamespaceQueryParams { Limit = 10, Filters = Filter.Regex("text", "\\w+fish") }
+);
+foreach (var row in regexResult.GetRows())
+{
+    Console.WriteLine(row);
+}
 ```
 ```go
 	// Vector search with a filter
@@ -1381,46 +1596,29 @@ console.log(result.rows);
     );
     System.out.println(regexResult);
 ```
-```cs
-// Vector search with a filter
-var queryResult = await ns.Query(
-    new NamespaceQueryParams
-    {
-        RankBy = RankBy.Ann("text", Expr.Embed("arctic sea mammal")),
-        Limit = 10,
-        Filters = Filter.Eq("public", true),
-    }
-);
-foreach (var row in queryResult.GetRows())
-{
-    Console.WriteLine(row);
-}
+```python
+# Vector search with a filter
+print(ns.query(
+    rank_by=("text", "ANN", ("Embed", "arctic sea mammal")),
+    limit=10,
+    filters=("public", "Eq", True),
+))
 
-// Full-text search with boosted category field
-var ftsResult = await ns.Query(
-    new NamespaceQueryParams
-    {
-        Limit = 10,
-        Filters = Filter.Eq("public", true),
-        RankBy = RankByText.Sum(
-            RankByText.Product(2, RankByText.BM25("category", "mammal")),
-            RankByText.BM25("text", "quick walrus")
-        ),
-    }
-);
-foreach (var row in ftsResult.GetRows())
-{
-    Console.WriteLine(row);
-}
+# Full-text search with boosted category field
+print(ns.query(
+    limit=10,
+    filters=("public", "Eq", True),
+    rank_by=("Sum", [
+        ("Product", 2, ("category", "BM25", "mammal")),
+        ("text", "BM25", "quick walrus"),
+    ]),
+))
 
-// Regex filter — matches "pufferfish", "swordfish", "clownfish"
-var regexResult = await ns.Query(
-    new NamespaceQueryParams { Limit = 10, Filters = Filter.Regex("text", "\\w+fish") }
-);
-foreach (var row in regexResult.GetRows())
-{
-    Console.WriteLine(row);
-}
+# Regex filter — matches "pufferfish", "swordfish", "clownfish"
+print(ns.query(
+    limit=10,
+    filters=("text", "Regex", "\\w+fish"),
+))
 ```
 ```ruby
 # Vector search with a filter
@@ -1449,6 +1647,213 @@ result = ns.query(
 )
 puts result.rows
 ```
+```rust
+    use turbopuffer::serde_json;
+    use turbopuffer::types::{Expr, Filter, RankBy, RankByText};
+
+    // Vector search with a filter
+    let result = ns
+        .query()
+        .rank_by(RankBy::ann("text", Expr::embed("arctic sea mammal")))
+        .limit(10)
+        .filters(Filter::eq("public", true))
+        .send()
+        .await?;
+    println!("{}", serde_json::to_string_pretty(&result.rows)?);
+
+    // Full-text search with boosted category field
+    let result = ns
+        .query()
+        .limit(10)
+        .filters(Filter::eq("public", true))
+        .rank_by(RankBy::sum([
+            RankByText::product(2.0, RankByText::bm25("category", "mammal")),
+            RankByText::bm25("text", "quick walrus"),
+        ]))
+        .send()
+        .await?;
+    println!("{}", serde_json::to_string_pretty(&result.rows)?);
+
+    // Regex filter — matches "pufferfish", "swordfish", "clownfish"
+    let result = ns
+        .query()
+        .limit(10)
+        .filters(Filter::regex("text", r"\w+fish"))
+        .send()
+        .await?;
+    println!("{}", serde_json::to_string_pretty(&result.rows)?);
+```
+```typescript
+// Vector search with a filter
+let result = await ns.query({
+  rank_by: ["text", "ANN", ["Embed", "arctic sea mammal"]],
+  limit: 10,
+  filters: ["public", "Eq", true],
+});
+console.log(result.rows);
+
+// Full-text search with boosted category field
+result = await ns.query({
+  limit: 10,
+  filters: ["public", "Eq", true],
+  rank_by: ["Sum", [
+    ["Product", 2, ["category", "BM25", "mammal"]],
+    ["text", "BM25", "quick walrus"],
+  ]],
+});
+console.log(result.rows);
+
+// Regex filter — matches "pufferfish", "swordfish", "clownfish"
+result = await ns.query({
+  limit: 10,
+  filters: ["text", "Regex", "\\w+fish"],
+});
+console.log(result.rows);
+```
+<!-- /multilang -->
+
+## Rerank
+
+[Rerank](/docs/reranking) the results with a model to put the most relevant
+documents first. The query retrieves candidates with vector search, then the
+model reads each candidate's `text` and scores it against the query. The
+attribute you rerank on must also be in `include_attributes`. Not every
+reranking model runs in every region, so check the
+[model list](/docs/reranking#models) if you change either.
+
+<!-- multilang -->
+```bash
+# Vector search, then rerank the candidates with a model
+curl $TPUF_URL/v2/namespaces/$TPUF_NAMESPACE/query \
+  -X POST --fail-with-body \
+  -H "Authorization: Bearer $api_key" \
+  -H 'Content-Type: application/json' \
+  -d '{
+   "rank_by": ["text", "ANN", ["Embed", "arctic sea mammal"]],
+   "limit": 10,
+   "include_attributes": ["text"],
+   "rerank_by": {
+     "model": "zeroentropy/zerank-2",
+     "attribute": "text",
+     "query": "arctic sea mammal"
+   }
+ }'
+```
+```cs
+// Vector search, then rerank the candidates with a model
+var rerankResult = await ns.Query(
+    new NamespaceQueryParams
+    {
+        RankBy = RankBy.Ann("text", Expr.Embed("arctic sea mammal")),
+        Limit = 10,
+        IncludeAttributes = new List<string> { "text" },
+        RerankBy = new RerankModelParams
+        {
+            Model = "zeroentropy/zerank-2",
+            Attribute = "text",
+            Query = "arctic sea mammal",
+        },
+    }
+);
+foreach (var row in rerankResult.GetRows())
+{
+    Console.WriteLine(row);
+}
+```
+```go
+	// Vector search, then rerank the candidates with a model
+	res, err := ns.Query(ctx, turbopuffer.NamespaceQueryParams{
+		RankBy:            turbopuffer.NewRankByAnnExpr("text", turbopuffer.NewExprEmbed("arctic sea mammal")),
+		Limit:             turbopuffer.LimitParam{Total: 10},
+		IncludeAttributes: turbopuffer.IncludeAttributesParam{StringArray: []string{"text"}},
+		RerankBy: turbopuffer.RerankModelParams{
+			Model:     "zeroentropy/zerank-2",
+			Attribute: "text",
+			Query:     "arctic sea mammal",
+		},
+	})
+	if err != nil {
+		panic(err)
+	}
+	fmt.Print(turbopuffer.PrettyPrint(res.Rows))
+```
+```java
+    // Vector search, then rerank the candidates with a model
+    var rerankResult = ns.query(
+      NamespaceQueryParams.builder()
+        .rankBy(RankBy.ann("text", Expr.embed("arctic sea mammal")))
+        .limit(10)
+        .includeAttributes(IncludeAttributes.select("text"))
+        .rerankBy(
+          RerankModelParams.builder()
+            .model("zeroentropy/zerank-2")
+            .attribute("text")
+            .query("arctic sea mammal")
+            .build()
+        )
+        .build()
+    );
+    System.out.println(rerankResult);
+```
+```python
+# Vector search, then rerank the candidates with a model
+print(ns.query(
+    rank_by=("text", "ANN", ("Embed", "arctic sea mammal")),
+    limit=10,
+    include_attributes=["text"],
+    rerank_by={
+        "model": "zeroentropy/zerank-2",
+        "attribute": "text",
+        "query": "arctic sea mammal",
+    },
+))
+```
+```ruby
+# Vector search, then rerank the candidates with a model
+result = ns.query(
+  rank_by: ["text", "ANN", ["Embed", "arctic sea mammal"]],
+  limit: 10,
+  include_attributes: ["text"],
+  rerank_by: {
+    model: "zeroentropy/zerank-2",
+    attribute: "text",
+    query: "arctic sea mammal",
+  },
+)
+puts result.rows
+```
+```rust
+    use turbopuffer::types::RerankModelParams;
+
+    // Vector search, then rerank the candidates with a model
+    let result = ns
+        .query()
+        .rank_by(RankBy::ann("text", Expr::embed("arctic sea mammal")))
+        .limit(10)
+        .include_attributes(["text"])
+        .rerank_by(RerankModelParams::new(
+            "zeroentropy/zerank-2",
+            "text",
+            "arctic sea mammal",
+        ))
+        .send()
+        .await?;
+    println!("{}", serde_json::to_string_pretty(&result.rows)?);
+```
+```typescript
+// Vector search, then rerank the candidates with a model
+const result = await ns.query({
+  rank_by: ["text", "ANN", ["Embed", "arctic sea mammal"]],
+  limit: 10,
+  include_attributes: ["text"],
+  rerank_by: {
+    model: "zeroentropy/zerank-2",
+    attribute: "text",
+    query: "arctic sea mammal",
+  },
+});
+console.log(result.rows);
+```
 <!-- /multilang -->
 
 ## Aggregate
@@ -1474,24 +1879,23 @@ curl $TPUF_URL/v2/namespaces/$TPUF_NAMESPACE/query \
 #   ]
 # }
 ```
-```python
-grouped = ns.query(
-    aggregate_by={"count_by_category": ("Count",)},
-    group_by=["category"],
-)
-print(grouped.aggregation_groups)
-# [Row(category=['fish'], count_by_category=1), Row(category=['mammal'], count_by_category=1)]
-```
-```typescript
-const grouped = await ns.query({
-  aggregate_by: { count_by_category: ["Count"] },
-  group_by: ["category"],
-});
-console.log(grouped.aggregation_groups);
-// [
-//   { category: ["fish"], count_by_category: 1 },
-//   { category: ["mammal"], count_by_category: 1 },
-// ]
+```cs
+var groupedResult = await ns.Query(
+    new NamespaceQueryParams
+    {
+        AggregateBy = new Dictionary<string, AggregateBy>
+        {
+            ["count_by_category"] = AggregateBy.Count("id"),
+        },
+        GroupBy = [GroupBy.Attr("category")],
+    }
+);
+foreach (var group in groupedResult.GetAggregationGroups())
+{
+    Console.WriteLine(group);
+}
+// { "category": ["fish"], "count_by_category": 1 }
+// { "category": ["mammal"], "count_by_category": 1 }
 ```
 ```go
 	groupedResult, err := ns.Query(ctx, turbopuffer.NamespaceQueryParams{
@@ -1519,23 +1923,13 @@ console.log(grouped.aggregation_groups);
     System.out.println(groupedResult.aggregationGroups().get());
     // [{category=[fish], count_by_category=1}, {category=[mammal], count_by_category=1}]
 ```
-```cs
-var groupedResult = await ns.Query(
-    new NamespaceQueryParams
-    {
-        AggregateBy = new Dictionary<string, AggregateBy>
-        {
-            ["count_by_category"] = AggregateBy.Count("id"),
-        },
-        GroupBy = [GroupBy.Attr("category")],
-    }
-);
-foreach (var group in groupedResult.GetAggregationGroups())
-{
-    Console.WriteLine(group);
-}
-// { "category": ["fish"], "count_by_category": 1 }
-// { "category": ["mammal"], "count_by_category": 1 }
+```python
+grouped = ns.query(
+    aggregate_by={"count_by_category": ("Count",)},
+    group_by=["category"],
+)
+print(grouped.aggregation_groups)
+# [Row(category=['fish'], count_by_category=1), Row(category=['mammal'], count_by_category=1)]
 ```
 ```ruby
 grouped = ns.query(
@@ -1545,6 +1939,35 @@ grouped = ns.query(
 puts grouped.aggregation_groups
 # {category: ["fish"], count_by_category: 1}
 # {category: ["mammal"], count_by_category: 1}
+```
+```rust
+    use turbopuffer::types::AggregateBy;
+
+    let grouped = ns
+        .query()
+        .aggregate_by([("count_by_category", AggregateBy::count())])
+        .group_by(["category"])
+        .send()
+        .await?;
+    println!(
+        "{}",
+        serde_json::to_string_pretty(&grouped.aggregation_groups)?
+    );
+    // [
+    //   {"category": ["fish"], "count_by_category": 1},
+    //   {"category": ["mammal"], "count_by_category": 1}
+    // ]
+```
+```typescript
+const grouped = await ns.query({
+  aggregate_by: { count_by_category: ["Count"] },
+  group_by: ["category"],
+});
+console.log(grouped.aggregation_groups);
+// [
+//   { category: ["fish"], count_by_category: 1 },
+//   { category: ["mammal"], count_by_category: 1 },
+// ]
 ```
 <!-- /multilang -->
 
@@ -1650,1069 +2073,663 @@ curl $TPUF_URL/v2/namespaces/$TPUF_NAMESPACE/query \
 #   ]
 # }
 ```
-```python
-# $ pip install turbopuffer
-# Sample Python notebook:
-# https://colab.research.google.com/drive/17i4sfFTeJQkINCxjBaOGOZeENZr4ZaTE
-import os
-import uuid
+```cs
+// dotnet add package Turbopuffer
+using System;
+using System.Collections.Generic;
+using Turbopuffer;
+using Turbopuffer.Models.Namespaces;
 
-import turbopuffer
+using var tpuf = new TurbopufferClient
+{
+    // API tokens are created in the dashboard: https://turbopuffer.com/dashboard
+    // Loaded from TURBOPUFFER_API_KEY env var by default. Override if necessary:
+    // ApiKey = "...",
 
-tpuf = turbopuffer.Turbopuffer(
-    api_key=os.getenv("TURBOPUFFER_API_KEY"), # created here: https://turbopuffer.com/dashboard
-    region="gcp-us-central1", # choose best region: https://turbopuffer.com/docs/regions
-)
+    // Pick the right region: https://turbopuffer.com/docs/regions
+    Region = "gcp-us-central1",
+};
 
-namespace = os.getenv("TURBOPUFFER_NAMESPACE", f"quickstart-{uuid.uuid4().hex[:8]}")
-ns = tpuf.namespace(namespace)
-
-# Upsert documents with attributes
-ns.write(
-    upsert_rows=[
-        {
-            'id': 1,
-            'category': ["mammal"],
-            'public': True,
-            'text': "walrus narwhal",
-        },
-        {
-            'id': 2,
-            'category': ["fish"],
-            'public': False,
-            'text': "pufferfish clownfish swordfish",
-        },
-    ],
-    distance_metric='cosine_distance',
-    schema={
-        "text": {
-            # Configure FTS/BM25. Other attributes get inferred types.
-            "type": "string",
-            # More schema & FTS options:
-            # https://turbopuffer.com/docs/write#schema
-            "full_text_search": True,
-            "regex": True,
-            # Native embeddings. Check the model is available in your region:
-            # https://turbopuffer.com/docs/embedding#models
-            "embed": {"model": "nvidia/nemotron-3-embed-8b", "dims": 1024},
-        },
-        "category": {
-            "type": "[]string",
-            "full_text_search": True,
-        },
-    }
-)
-
-# Query nearest neighbors with a filter
-print(ns.query(
-  rank_by=("text", "ANN", ("Embed", "arctic sea mammal")),
-  limit=10,
-  filters=("public", "Eq", True),
-))
-# [Row(id=1, $dist=...)]
-
-# Full-text search on an attribute
-# To combine FTS and vector search concurrently, see:
-# https://turbopuffer.com/docs/hybrid-search
-print(ns.query(
-  limit=10,
-  filters=("public", "Eq", True),
-  rank_by=("Sum", [
-      ("Product", 2, ("category", "BM25", "mammal")),
-      ("text", "BM25", "quick walrus"),
-  ]),
-))
-# [Row(id=1, vector=None, $dist=0.7549128)]
-
-# Regex filter — matches "pufferfish", "swordfish", "clownfish"
-print(ns.query(
-  limit=10,
-  filters=("text", "Regex", "\\w+fish"),
-))
-
-# Count documents grouped by category
-grouped_result = ns.query(
-    aggregate_by={"count_by_category": ("Count",)},
-    group_by=["category"],
-)
-print(grouped_result.aggregation_groups)
-# [Row(category=['fish'], count_by_category=1), Row(category=['mammal'], count_by_category=1)]
-```
-```python
-# $ pip install turbopuffer sentence-transformers
-# Sample Python notebook:
-# https://colab.research.google.com/drive/17i4sfFTeJQkINCxjBaOGOZeENZr4ZaTE
-import os
-import uuid
-from typing import List
-
-import turbopuffer
-from sentence_transformers import SentenceTransformer
-
-tpuf = turbopuffer.Turbopuffer(
-    api_key=os.getenv("TURBOPUFFER_API_KEY"), # created here: https://turbopuffer.com/dashboard
-    region="gcp-us-central1", # choose best region: https://turbopuffer.com/docs/regions
-)
-
-namespace = os.getenv("TURBOPUFFER_NAMESPACE", f"quickstart-{uuid.uuid4().hex[:8]}")
-ns = tpuf.namespace(namespace)
-
-# Local embeddings with BGE — no API key needed.
-# Model is downloaded on first run (~130 MB).
-bge = SentenceTransformer("BAAI/bge-small-en-v1.5")
-
-def embed(text: str) -> List[float]:
-    return bge.encode(text).tolist()
-
-# Upsert documents with vectors and attributes
-ns.write(
-    upsert_rows=[
-        {
-            'id': 1,
-            'vector': embed("walrus narwhal"),
-            'category': ["mammal"],
-            'public': True,
-            'text': "walrus narwhal",
-        },
-        {
-            'id': 2,
-            'vector': embed("pufferfish clownfish swordfish"),
-            'category': ["fish"],
-            'public': False,
-            'text': "pufferfish clownfish swordfish",
-        },
-    ],
-    distance_metric='cosine_distance',
-    schema={
-        "text": {
-            # Configure FTS/BM25. Other attributes get inferred types (`public`: int).
-            "type": "string",
-            # More schema & FTS options:
-            # https://turbopuffer.com/docs/write#schema
-            "full_text_search": True,
-            "regex": True,
-        },
-        "category": {
-            "type": "[]string",
-            "full_text_search": True,
-        },
-    }
-)
-
-# Query nearest neighbors with a filter
-print(ns.query(
-  rank_by=("vector", "ANN", embed("arctic sea mammal")),
-  limit=10,
-  filters=("public", "Eq", True),
-))
-# [Row(id=1, vector=None, $dist=0.42773545)]
-
-# Full-text search on an attribute
-# To combine FTS and vector search concurrently, see:
-# https://turbopuffer.com/docs/hybrid-search
-print(ns.query(
-  limit=10,
-  filters=("public", "Eq", True),
-  rank_by=("Sum", [
-      ("Product", 2, ("category", "BM25", "mammal")),
-      ("text", "BM25", "quick walrus"),
-  ]),
-))
-# [Row(id=1, vector=None, $dist=0.7549128)]
-
-# Regex filter — matches "pufferfish", "swordfish", "clownfish"
-print(ns.query(
-  limit=10,
-  filters=("text", "Regex", "\\w+fish"),
-))
-
-# Count documents grouped by category
-grouped_result = ns.query(
-    aggregate_by={"count_by_category": ("Count",)},
-    group_by=["category"],
-)
-print(grouped_result.aggregation_groups)
-# [Row(category=['fish'], count_by_category=1), Row(category=['mammal'], count_by_category=1)]
-```
-```python
-# $ pip install turbopuffer cohere
-# Sample Python notebook:
-# https://colab.research.google.com/drive/17i4sfFTeJQkINCxjBaOGOZeENZr4ZaTE
-import os
-import uuid
-from typing import List
-
-import turbopuffer
-from cohere import ClientV2
-
-tpuf = turbopuffer.Turbopuffer(
-    api_key=os.getenv("TURBOPUFFER_API_KEY"), # created here: https://turbopuffer.com/dashboard
-    region="gcp-us-central1", # choose best region: https://turbopuffer.com/docs/regions
-)
-
-namespace = os.getenv("TURBOPUFFER_NAMESPACE", f"quickstart-{uuid.uuid4().hex[:8]}")
-ns = tpuf.namespace(namespace)
-cohere = ClientV2(api_key=os.environ["COHERE_API_KEY"])
-
-# Create an embedding with Cohere.
-# Requires COHERE_API_KEY to be set (https://dashboard.cohere.com/api-keys)
-def embed(text: str) -> List[float]:
-    return cohere.embed(
-        model="embed-v4.0",
-        input_type="search_document",
-        texts=[text],
-        embedding_types=["float"],
-    ).embeddings.float[0]
-
-# Upsert documents with vectors and attributes
-ns.write(
-    upsert_rows=[
-        {
-            'id': 1,
-            'vector': embed("walrus narwhal"),
-            'category': ["mammal"],
-            'public': True,
-            'text': "walrus narwhal",
-        },
-        {
-            'id': 2,
-            'vector': embed("pufferfish clownfish swordfish"),
-            'category': ["fish"],
-            'public': False,
-            'text': "pufferfish clownfish swordfish",
-        },
-    ],
-    distance_metric='cosine_distance',
-    schema={
-        "text": {
-            # Configure FTS/BM25. Other attributes get inferred types (`public`: int).
-            "type": "string",
-            # More schema & FTS options:
-            # https://turbopuffer.com/docs/write#schema
-            "full_text_search": True,
-            "regex": True,
-        },
-        "category": {
-            "type": "[]string",
-            "full_text_search": True,
-        },
-    }
-)
-
-# Query nearest neighbors with a filter
-print(ns.query(
-  rank_by=("vector", "ANN", embed("arctic sea mammal")),
-  limit=10,
-  filters=("public", "Eq", True),
-))
-# [Row(id=1, vector=None, $dist=0.42773545)]
-
-# Full-text search on an attribute
-# To combine FTS and vector search concurrently, see:
-# https://turbopuffer.com/docs/hybrid-search
-print(ns.query(
-  limit=10,
-  filters=("public", "Eq", True),
-  rank_by=("Sum", [
-      ("Product", 2, ("category", "BM25", "mammal")),
-      ("text", "BM25", "quick walrus"),
-  ]),
-))
-# [Row(id=1, vector=None, $dist=0.7549128)]
-
-# Regex filter — matches "pufferfish", "swordfish", "clownfish"
-print(ns.query(
-  limit=10,
-  filters=("text", "Regex", "\\w+fish"),
-))
-
-# Count documents grouped by category
-grouped_result = ns.query(
-    aggregate_by={"count_by_category": ("Count",)},
-    group_by=["category"],
-)
-print(grouped_result.aggregation_groups)
-# [Row(category=['fish'], count_by_category=1), Row(category=['mammal'], count_by_category=1)]
-```
-```python
-# $ pip install turbopuffer google-genai
-# Sample Python notebook:
-# https://colab.research.google.com/drive/17i4sfFTeJQkINCxjBaOGOZeENZr4ZaTE
-import os
-import uuid
-from typing import List
-
-import turbopuffer
-from google.genai import Client
-from google.genai.types import EmbedContentConfig
-
-tpuf = turbopuffer.Turbopuffer(
-    api_key=os.getenv("TURBOPUFFER_API_KEY"), # created here: https://turbopuffer.com/dashboard
-    region="gcp-us-central1", # choose best region: https://turbopuffer.com/docs/regions
-)
-
-namespace = os.getenv("TURBOPUFFER_NAMESPACE", f"quickstart-{uuid.uuid4().hex[:8]}")
-ns = tpuf.namespace(namespace)
-gemini = Client(api_key=os.environ["GEMINI_API_KEY"])
-
-# Create an embedding with Gemini.
-# Requires GEMINI_API_KEY to be set (https://aistudio.google.com/app/apikey)
-def embed(text: str) -> List[float]:
-    return gemini.models.embed_content(
-        model="gemini-embedding-001",
-        contents=text,
-        config=EmbedContentConfig(task_type="RETRIEVAL_DOCUMENT"),
-    ).embeddings[0].values
-
-# Upsert documents with vectors and attributes
-ns.write(
-    upsert_rows=[
-        {
-            'id': 1,
-            'vector': embed("walrus narwhal"),
-            'category': ["mammal"],
-            'public': True,
-            'text': "walrus narwhal",
-        },
-        {
-            'id': 2,
-            'vector': embed("pufferfish clownfish swordfish"),
-            'category': ["fish"],
-            'public': False,
-            'text': "pufferfish clownfish swordfish",
-        },
-    ],
-    distance_metric='cosine_distance',
-    schema={
-        "text": {
-            # Configure FTS/BM25. Other attributes get inferred types (`public`: int).
-            "type": "string",
-            # More schema & FTS options:
-            # https://turbopuffer.com/docs/write#schema
-            "full_text_search": True,
-            "regex": True,
-        },
-        "category": {
-            "type": "[]string",
-            "full_text_search": True,
-        },
-    }
-)
-
-# Query nearest neighbors with a filter
-print(ns.query(
-  rank_by=("vector", "ANN", embed("arctic sea mammal")),
-  limit=10,
-  filters=("public", "Eq", True),
-))
-# [Row(id=1, vector=None, $dist=0.42773545)]
-
-# Full-text search on an attribute
-# To combine FTS and vector search concurrently, see:
-# https://turbopuffer.com/docs/hybrid-search
-print(ns.query(
-  limit=10,
-  filters=("public", "Eq", True),
-  rank_by=("Sum", [
-      ("Product", 2, ("category", "BM25", "mammal")),
-      ("text", "BM25", "quick walrus"),
-  ]),
-))
-# [Row(id=1, vector=None, $dist=0.7549128)]
-
-# Regex filter — matches "pufferfish", "swordfish", "clownfish"
-print(ns.query(
-  limit=10,
-  filters=("text", "Regex", "\\w+fish"),
-))
-
-# Count documents grouped by category
-grouped_result = ns.query(
-    aggregate_by={"count_by_category": ("Count",)},
-    group_by=["category"],
-)
-print(grouped_result.aggregation_groups)
-# [Row(category=['fish'], count_by_category=1), Row(category=['mammal'], count_by_category=1)]
-```
-```python
-# $ pip install turbopuffer openai
-# Sample Python notebook:
-# https://colab.research.google.com/drive/17i4sfFTeJQkINCxjBaOGOZeENZr4ZaTE
-import os
-import uuid
-from typing import List
-
-import turbopuffer
-from openai import OpenAI
-
-tpuf = turbopuffer.Turbopuffer(
-    api_key=os.getenv("TURBOPUFFER_API_KEY"), # created here: https://turbopuffer.com/dashboard
-    region="gcp-us-central1", # choose best region: https://turbopuffer.com/docs/regions
-)
-
-namespace = os.getenv("TURBOPUFFER_NAMESPACE", f"quickstart-{uuid.uuid4().hex[:8]}")
-ns = tpuf.namespace(namespace)
-fireworks = OpenAI(
-    api_key=os.environ["FIREWORKS_API_KEY"],
-    base_url="https://api.fireworks.ai/inference/v1",
-)
-
-# Create an embedding with Qwen on Fireworks.
-# Requires FIREWORKS_API_KEY to be set (https://fireworks.ai/settings/users/api-keys)
-def embed(text: str) -> List[float]:
-    return fireworks.embeddings.create(
-        model="fireworks/qwen3-embedding-8b",
-        input=text,
-    ).data[0].embedding
-
-# Upsert documents with vectors and attributes
-ns.write(
-    upsert_rows=[
-        {
-            'id': 1,
-            'vector': embed("walrus narwhal"),
-            'category': ["mammal"],
-            'public': True,
-            'text': "walrus narwhal",
-        },
-        {
-            'id': 2,
-            'vector': embed("pufferfish clownfish swordfish"),
-            'category': ["fish"],
-            'public': False,
-            'text': "pufferfish clownfish swordfish",
-        },
-    ],
-    distance_metric='cosine_distance',
-    schema={
-        "text": {
-            # Configure FTS/BM25. Other attributes get inferred types (`public`: int).
-            "type": "string",
-            # More schema & FTS options:
-            # https://turbopuffer.com/docs/write#schema
-            "full_text_search": True,
-            "regex": True,
-        },
-        "category": {
-            "type": "[]string",
-            "full_text_search": True,
-        },
-    }
-)
-
-# Query nearest neighbors with a filter
-print(ns.query(
-  rank_by=("vector", "ANN", embed("arctic sea mammal")),
-  limit=10,
-  filters=("public", "Eq", True),
-))
-# [Row(id=1, vector=None, $dist=0.42773545)]
-
-# Full-text search on an attribute
-# To combine FTS and vector search concurrently, see:
-# https://turbopuffer.com/docs/hybrid-search
-print(ns.query(
-  limit=10,
-  filters=("public", "Eq", True),
-  rank_by=("Sum", [
-      ("Product", 2, ("category", "BM25", "mammal")),
-      ("text", "BM25", "quick walrus"),
-  ]),
-))
-# [Row(id=1, vector=None, $dist=0.7549128)]
-
-# Regex filter — matches "pufferfish", "swordfish", "clownfish"
-print(ns.query(
-  limit=10,
-  filters=("text", "Regex", "\\w+fish"),
-))
-
-# Count documents grouped by category
-grouped_result = ns.query(
-    aggregate_by={"count_by_category": ("Count",)},
-    group_by=["category"],
-)
-print(grouped_result.aggregation_groups)
-# [Row(category=['fish'], count_by_category=1), Row(category=['mammal'], count_by_category=1)]
-```
-```python
-# $ pip install turbopuffer voyageai
-# Sample Python notebook:
-# https://colab.research.google.com/drive/17i4sfFTeJQkINCxjBaOGOZeENZr4ZaTE
-import os
-import uuid
-from typing import List
-
-import turbopuffer
-import voyageai
-
-tpuf = turbopuffer.Turbopuffer(
-    api_key=os.getenv("TURBOPUFFER_API_KEY"), # created here: https://turbopuffer.com/dashboard
-    region="gcp-us-central1", # choose best region: https://turbopuffer.com/docs/regions
-)
-
-namespace = os.getenv("TURBOPUFFER_NAMESPACE", f"quickstart-{uuid.uuid4().hex[:8]}")
-ns = tpuf.namespace(namespace)
-voyage = voyageai.Client(api_key=os.environ["VOYAGE_API_KEY"])
-
-# Create an embedding with Voyage.
-# Requires VOYAGE_API_KEY to be set:
-# https://dashboard.voyageai.com/organization/api-keys
-def embed(text: str) -> List[float]:
-    return voyage.embed([text], model="voyage-4-lite").embeddings[0]
-
-# Upsert documents with vectors and attributes
-ns.write(
-    upsert_rows=[
-        {
-            'id': 1,
-            'vector': embed("walrus narwhal"),
-            'category': ["mammal"],
-            'public': True,
-            'text': "walrus narwhal",
-        },
-        {
-            'id': 2,
-            'vector': embed("pufferfish clownfish swordfish"),
-            'category': ["fish"],
-            'public': False,
-            'text': "pufferfish clownfish swordfish",
-        },
-    ],
-    distance_metric='cosine_distance',
-    schema={
-        "text": {
-            # Configure FTS/BM25. Other attributes get inferred types.
-            "type": "string",
-            # More schema & FTS options:
-            # https://turbopuffer.com/docs/write#schema
-            "full_text_search": True,
-            "regex": True,
-        },
-        "category": {
-            "type": "[]string",
-            "full_text_search": True,
-        },
-    }
-)
-
-# Query nearest neighbors with a filter
-print(ns.query(
-  rank_by=("vector", "ANN", embed("arctic sea mammal")),
-  limit=10,
-  filters=("public", "Eq", True),
-))
-# [Row(id=1, vector=None, $dist=0.42773545)]
-
-# Full-text search on an attribute
-# To combine FTS and vector search concurrently, see:
-# https://turbopuffer.com/docs/hybrid-search
-print(ns.query(
-  limit=10,
-  filters=("public", "Eq", True),
-  rank_by=("Sum", [
-      ("Product", 2, ("category", "BM25", "mammal")),
-      ("text", "BM25", "quick walrus"),
-  ]),
-))
-# [Row(id=1, vector=None, $dist=0.7549128)]
-
-# Regex filter — matches "pufferfish", "swordfish", "clownfish"
-print(ns.query(
-  limit=10,
-  filters=("text", "Regex", "\\w+fish"),
-))
-
-# Count documents grouped by category
-grouped_result = ns.query(
-    aggregate_by={"count_by_category": ("Count",)},
-    group_by=["category"],
-)
-print(grouped_result.aggregation_groups)
-# [Row(category=['fish'], count_by_category=1), Row(category=['mammal'], count_by_category=1)]
-```
-```typescript
-// $ npm install @turbopuffer/turbopuffer
-import { Turbopuffer } from "@turbopuffer/turbopuffer";
-
-const tpuf = new Turbopuffer({
-  apiKey: process.env.TURBOPUFFER_API_KEY, // created here: https://turbopuffer.com/dashboard
-  region: "gcp-us-central1", // choose best region: https://turbopuffer.com/docs/regions
-});
-
-const namespace = process.env.TURBOPUFFER_NAMESPACE ?? `quickstart-${Math.random().toString(36).slice(2, 10)}`;
-const ns = tpuf.namespace(namespace);
+var ns = tpuf.Namespace("quickstart-example-csharp");
 
 // Upsert documents with attributes
-await ns.write({
-  upsert_rows: [
+await ns.Write(
+    new NamespaceWriteParams
     {
-      id: 1,
-      category: ["mammal"],
-      public: true,
-      text: "walrus narwhal",
-    },
+        UpsertRows =
+        [
+            new Row()
+                .Set("id", 1)
+                .Set("category", "mammal")
+                .Set("public", 1)
+                .Set("text", "walrus narwhal"),
+            new Row()
+                .Set("id", 2)
+                .Set("category", "fish")
+                .Set("public", 0)
+                .Set("text", "pufferfish clownfish swordfish"),
+        ],
+        DistanceMetric = DistanceMetric.CosineDistance,
+        Schema = new Dictionary<string, AttributeSchemaConfig>
+        {
+            ["text"] = new AttributeSchemaConfig
+            {
+                Type = "string",
+                // More schema & FTS options
+                // https://turbopuffer.com/docs/write#schema
+                FullTextSearch = true,
+                // Native embeddings. Check the model is available in your region:
+                // https://turbopuffer.com/docs/embedding#models
+                Embed = new AttributeEmbedConfig { Model = "nvidia/nemotron-3-embed-8b", Dims = 1024 },
+            },
+        },
+    }
+);
+
+// Query nearest neighbors with filter
+var queryResult = await ns.Query(
+    new NamespaceQueryParams
     {
-      id: 2,
-      category: ["fish"],
-      public: false,
-      text: "pufferfish clownfish swordfish",
-    },
-  ],
-  distance_metric: "cosine_distance",
-  schema: {
-    text: {
-      // Configure FTS/BM25. Other attributes have inferred types.
-      type: "string",
-      // More schema & FTS options:
-      // https://turbopuffer.com/docs/write#schema
-      full_text_search: true,
-      regex: true,
-      // Native embeddings. Check the model is available in your region:
-      // https://turbopuffer.com/docs/embedding#models
-      embed: { model: "nvidia/nemotron-3-embed-8b", dims: 1024 },
-    },
-    category: { type: "[]string", full_text_search: true },
-  },
-});
+        RankBy = RankBy.Ann("text", Expr.Embed("arctic sea mammal")),
+        Limit = 10,
+        Filters = Filter.And(Filter.Eq("category", "mammal"), Filter.Eq("public", 1)),
+        IncludeAttributes = new List<string> { "category" },
+    }
+);
+foreach (var row in queryResult.GetRows())
+{
+    Console.WriteLine(row);
+}
+// {"$dist": ..., "id": 1, "category": "mammal"}
+
+// Full-text search on an attribute
+// To combine FTS and vector search concurrently and fuse results, see https://turbopuffer.com/docs/hybrid-search
+var ftsResult = await ns.Query(
+    new NamespaceQueryParams
+    {
+        Limit = 10,
+        Filters = Filter.Eq("category", "mammal"),
+        RankBy = RankByText.BM25("text", "quick walrus"),
+    }
+);
+foreach (var row in ftsResult.GetRows())
+{
+    Console.WriteLine(row);
+}
+// {"$dist": 0.7549128, "id": 1}
+
+// Documents are updated by passing new data for an existing ID
+await ns.Write(
+    new NamespaceWriteParams
+    {
+        UpsertRows =
+        [
+            new Row().Set("id", 1).Set("text", "beluga whale").Set("public", 1),
+            new Row().Set("id", 2).Set("text", "manta ray").Set("public", 1),
+            new Row().Set("id", 3).Set("text", "octopus cuttlefish").Set("public", 1),
+        ],
+        DistanceMetric = DistanceMetric.CosineDistance,
+    }
+);
+
+// Documents are deleted by ID.
+await ns.Write(new NamespaceWriteParams { Deletes = [1L, 3L] });
+```
+```cs
+// dotnet add package Turbopuffer
+using System;
+using System.Collections.Generic;
+using System.Linq;
+using System.Net.Http;
+using System.Net.Http.Headers;
+using System.Text;
+using System.Text.Json;
+using Turbopuffer;
+using Turbopuffer.Models.Namespaces;
+
+using var tpuf = new TurbopufferClient
+{
+    Region = "gcp-us-central1", // choose best region: https://turbopuffer.com/docs/regions
+};
+
+var namespaceName =
+    Environment.GetEnvironmentVariable("TURBOPUFFER_NAMESPACE")
+    ?? $"quickstart-{Guid.NewGuid().ToString("N").Substring(0, 8)}";
+var ns = tpuf.Namespace(namespaceName);
+
+// Upsert documents with vectors and attributes
+await ns.Write(
+    new NamespaceWriteParams
+    {
+        UpsertRows =
+        [
+            new Row()
+                .Set("id", 1)
+                .Set("vector", Embed("walrus narwhal"))
+                .Set("category", new[] { "mammal" })
+                .Set("public", true)
+                .Set("text", "walrus narwhal"),
+            new Row()
+                .Set("id", 2)
+                .Set("vector", Embed("pufferfish clownfish swordfish"))
+                .Set("category", new[] { "fish" })
+                .Set("public", false)
+                .Set("text", "pufferfish clownfish swordfish"),
+        ],
+        DistanceMetric = DistanceMetric.CosineDistance,
+        Schema = new Dictionary<string, AttributeSchemaConfig>
+        {
+            ["text"] = new AttributeSchemaConfig
+            {
+                Type = "string",
+                // More schema & FTS options:
+                // https://turbopuffer.com/docs/write#schema
+                FullTextSearch = true,
+                Regex = true,
+            },
+            ["category"] = new AttributeSchemaConfig { Type = "[]string", FullTextSearch = true },
+        },
+    }
+);
 
 // Query nearest neighbors with a filter
-let result = await ns.query({
-  rank_by: ["text", "ANN", ["Embed", "arctic sea mammal"]],
-  limit: 10,
-  filters: ["public", "Eq", true],
-});
-console.log(result.rows);
-// [{ '$dist': ..., id: 1 }]
+var queryResult = await ns.Query(
+    new NamespaceQueryParams
+    {
+        RankBy = RankBy.Ann("vector", Embed("arctic sea mammal")),
+        Limit = 10,
+        Filters = Filter.Eq("public", true),
+    }
+);
+foreach (var row in queryResult.GetRows())
+{
+    Console.WriteLine(row);
+}
 
 // Full-text search on an attribute
 // To combine FTS and vector search concurrently, see:
 // https://turbopuffer.com/docs/hybrid-search
-result = await ns.query({
-  limit: 10,
-  filters: ["public", "Eq", true],
-  rank_by: ["Sum", [
-    ["Product", 2, ["category", "BM25", "mammal"]],
-    ["text", "BM25", "quick walrus"],
-  ]],
-});
-console.log(result.rows);
-// [{ '$dist': 0.7549128, id: 1 }]
+var ftsResult = await ns.Query(
+    new NamespaceQueryParams
+    {
+        Limit = 10,
+        Filters = Filter.Eq("public", true),
+        RankBy = RankByText.Sum(
+            RankByText.Product(2, RankByText.BM25("category", "mammal")),
+            RankByText.BM25("text", "quick walrus")
+        ),
+    }
+);
+foreach (var row in ftsResult.GetRows())
+{
+    Console.WriteLine(row);
+}
 
 // Regex filter — matches "pufferfish", "swordfish", "clownfish"
-result = await ns.query({
-  limit: 10,
-  filters: ["text", "Regex", "\\w+fish"],
-});
-console.log(result.rows);
+var regexResult = await ns.Query(
+    new NamespaceQueryParams { Limit = 10, Filters = Filter.Regex("text", "\\w+fish") }
+);
+foreach (var row in regexResult.GetRows())
+{
+    Console.WriteLine(row);
+}
 
 // Count documents grouped by category
-const groupedResult = await ns.query({
-  aggregate_by: { count_by_category: ["Count"] },
-  group_by: ["category"],
-});
-console.log(groupedResult.aggregation_groups);
-// [
-//   { category: ["fish"], count_by_category: 1 },
-//   { category: ["mammal"], count_by_category: 1 },
-// ]
-```
-```typescript
-// $ npm install @turbopuffer/turbopuffer cohere-ai
-import { Turbopuffer } from "@turbopuffer/turbopuffer";
-import { CohereClient } from "cohere-ai";
-
-const tpuf = new Turbopuffer({
-  apiKey: process.env.TURBOPUFFER_API_KEY, // created here: https://turbopuffer.com/dashboard
-  region: "gcp-us-central1", // choose best region: https://turbopuffer.com/docs/regions
-});
-
-const namespace = process.env.TURBOPUFFER_NAMESPACE ?? `quickstart-${Math.random().toString(36).slice(2, 10)}`;
-const ns = tpuf.namespace(namespace);
-const cohere = new CohereClient({ token: process.env.COHERE_API_KEY });
+var groupedResult = await ns.Query(
+    new NamespaceQueryParams
+    {
+        AggregateBy = new Dictionary<string, AggregateBy>
+        {
+            ["count_by_category"] = AggregateBy.Count("id"),
+        },
+        GroupBy = [GroupBy.Attr("category")],
+    }
+);
+foreach (var group in groupedResult.GetAggregationGroups())
+{
+    Console.WriteLine(group);
+}
 
 // Create an embedding with Cohere.
 // Requires COHERE_API_KEY to be set (https://dashboard.cohere.com/api-keys)
-async function embed(text: string): Promise<number[]> {
-  return (await cohere.v2.embed({
-    model: "embed-v4.0",
-    inputType: "search_document",
-    texts: [text],
-    embeddingTypes: ["float"],
-  })).embeddings.float![0];
+static List<float> Embed(string text)
+{
+    using var http = new HttpClient();
+    var request = new HttpRequestMessage(HttpMethod.Post, "https://api.cohere.com/v2/embed")
+    {
+        Content = new StringContent(
+            JsonSerializer.Serialize(
+                new
+                {
+                    model = "embed-v4.0",
+                    input_type = "search_document",
+                    texts = new[] { text },
+                    embedding_types = new[] { "float" },
+                }
+            ),
+            Encoding.UTF8,
+            "application/json"
+        ),
+    };
+    request.Headers.Authorization = new AuthenticationHeaderValue(
+        "Bearer",
+        Environment.GetEnvironmentVariable("COHERE_API_KEY")
+    );
+    var response = http.Send(request);
+    response.EnsureSuccessStatusCode();
+    using var doc = JsonDocument.Parse(response.Content.ReadAsStream());
+    return doc
+        .RootElement.GetProperty("embeddings")
+        .GetProperty("float")[0]
+        .EnumerateArray()
+        .Select(v => v.GetSingle())
+        .ToList();
 }
+```
+```cs
+// dotnet add package Turbopuffer
+using System;
+using System.Collections.Generic;
+using System.Linq;
+using System.Net.Http;
+using System.Text;
+using System.Text.Json;
+using Turbopuffer;
+using Turbopuffer.Models.Namespaces;
+
+using var tpuf = new TurbopufferClient
+{
+    Region = "gcp-us-central1", // choose best region: https://turbopuffer.com/docs/regions
+};
+
+var namespaceName =
+    Environment.GetEnvironmentVariable("TURBOPUFFER_NAMESPACE")
+    ?? $"quickstart-{Guid.NewGuid().ToString("N").Substring(0, 8)}";
+var ns = tpuf.Namespace(namespaceName);
 
 // Upsert documents with vectors and attributes
-await ns.write({
-  upsert_rows: [
+await ns.Write(
+    new NamespaceWriteParams
     {
-      id: 1,
-      vector: await embed("walrus narwhal"),
-      category: ["mammal"],
-      public: true,
-      text: "walrus narwhal",
-    },
-    {
-      id: 2,
-      vector: await embed("pufferfish clownfish swordfish"),
-      category: ["fish"],
-      public: false,
-      text: "pufferfish clownfish swordfish",
-    },
-  ],
-  distance_metric: "cosine_distance",
-  schema: {
-    text: {
-      // Configure FTS/BM25. Other attributes have inferred types (`public`: int).
-      type: "string",
-      // More schema & FTS options:
-      // https://turbopuffer.com/docs/write#schema
-      full_text_search: true,
-      regex: true,
-    },
-    category: { type: "[]string", full_text_search: true },
-  },
-});
+        UpsertRows =
+        [
+            new Row()
+                .Set("id", 1)
+                .Set("vector", Embed("walrus narwhal"))
+                .Set("category", new[] { "mammal" })
+                .Set("public", true)
+                .Set("text", "walrus narwhal"),
+            new Row()
+                .Set("id", 2)
+                .Set("vector", Embed("pufferfish clownfish swordfish"))
+                .Set("category", new[] { "fish" })
+                .Set("public", false)
+                .Set("text", "pufferfish clownfish swordfish"),
+        ],
+        DistanceMetric = DistanceMetric.CosineDistance,
+        Schema = new Dictionary<string, AttributeSchemaConfig>
+        {
+            ["text"] = new AttributeSchemaConfig
+            {
+                Type = "string",
+                // More schema & FTS options:
+                // https://turbopuffer.com/docs/write#schema
+                FullTextSearch = true,
+                Regex = true,
+            },
+            ["category"] = new AttributeSchemaConfig { Type = "[]string", FullTextSearch = true },
+        },
+    }
+);
 
 // Query nearest neighbors with a filter
-let result = await ns.query({
-  rank_by: ["vector", "ANN", await embed("arctic sea mammal")],
-  limit: 10,
-  filters: ["public", "Eq", true],
-});
-console.log(result.rows);
-// [{ '$dist': 0.42773545, id: 1 }]
+var queryResult = await ns.Query(
+    new NamespaceQueryParams
+    {
+        RankBy = RankBy.Ann("vector", Embed("arctic sea mammal")),
+        Limit = 10,
+        Filters = Filter.Eq("public", true),
+    }
+);
+foreach (var row in queryResult.GetRows())
+{
+    Console.WriteLine(row);
+}
 
 // Full-text search on an attribute
 // To combine FTS and vector search concurrently, see:
 // https://turbopuffer.com/docs/hybrid-search
-result = await ns.query({
-  limit: 10,
-  filters: ["public", "Eq", true],
-  rank_by: ["Sum", [
-    ["Product", 2, ["category", "BM25", "mammal"]],
-    ["text", "BM25", "quick walrus"],
-  ]],
-});
-console.log(result.rows);
-// [{ '$dist': 0.7549128, id: 1 }]
+var ftsResult = await ns.Query(
+    new NamespaceQueryParams
+    {
+        Limit = 10,
+        Filters = Filter.Eq("public", true),
+        RankBy = RankByText.Sum(
+            RankByText.Product(2, RankByText.BM25("category", "mammal")),
+            RankByText.BM25("text", "quick walrus")
+        ),
+    }
+);
+foreach (var row in ftsResult.GetRows())
+{
+    Console.WriteLine(row);
+}
 
 // Regex filter — matches "pufferfish", "swordfish", "clownfish"
-result = await ns.query({
-  limit: 10,
-  filters: ["text", "Regex", "\\w+fish"],
-});
-console.log(result.rows);
+var regexResult = await ns.Query(
+    new NamespaceQueryParams { Limit = 10, Filters = Filter.Regex("text", "\\w+fish") }
+);
+foreach (var row in regexResult.GetRows())
+{
+    Console.WriteLine(row);
+}
 
 // Count documents grouped by category
-const groupedResult = await ns.query({
-  aggregate_by: { count_by_category: ["Count"] },
-  group_by: ["category"],
-});
-console.log(groupedResult.aggregation_groups);
-// [
-//   { category: ["fish"], count_by_category: 1 },
-//   { category: ["mammal"], count_by_category: 1 },
-// ]
-```
-```typescript
-// $ npm install @turbopuffer/turbopuffer @google/genai
-import { Turbopuffer } from "@turbopuffer/turbopuffer";
-import { GoogleGenAI } from "@google/genai";
-
-const tpuf = new Turbopuffer({
-  apiKey: process.env.TURBOPUFFER_API_KEY, // created here: https://turbopuffer.com/dashboard
-  region: "gcp-us-central1", // choose best region: https://turbopuffer.com/docs/regions
-});
-
-const namespace = process.env.TURBOPUFFER_NAMESPACE ?? `quickstart-${Math.random().toString(36).slice(2, 10)}`;
-const ns = tpuf.namespace(namespace);
-const gemini = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
+var groupedResult = await ns.Query(
+    new NamespaceQueryParams
+    {
+        AggregateBy = new Dictionary<string, AggregateBy>
+        {
+            ["count_by_category"] = AggregateBy.Count("id"),
+        },
+        GroupBy = [GroupBy.Attr("category")],
+    }
+);
+foreach (var group in groupedResult.GetAggregationGroups())
+{
+    Console.WriteLine(group);
+}
 
 // Create an embedding with Gemini.
 // Requires GEMINI_API_KEY to be set (https://aistudio.google.com/app/apikey)
-async function embed(text: string): Promise<number[]> {
-  return (
-    await gemini.models.embedContent({
-      model: "gemini-embedding-001",
-      contents: text,
-      config: { taskType: "RETRIEVAL_DOCUMENT" },
-    })
-  ).embeddings![0].values!;
+static List<float> Embed(string text)
+{
+    var apiKey = Environment.GetEnvironmentVariable("GEMINI_API_KEY");
+    using var http = new HttpClient();
+    var request = new HttpRequestMessage(
+        HttpMethod.Post,
+        "https://generativelanguage.googleapis.com/v1beta/models/gemini-embedding-001:embedContent?key="
+            + apiKey
+    )
+    {
+        Content = new StringContent(
+            JsonSerializer.Serialize(
+                new
+                {
+                    model = "models/gemini-embedding-001",
+                    content = new { parts = new[] { new { text } } },
+                    taskType = "RETRIEVAL_DOCUMENT",
+                }
+            ),
+            Encoding.UTF8,
+            "application/json"
+        ),
+    };
+    var response = http.Send(request);
+    response.EnsureSuccessStatusCode();
+    using var doc = JsonDocument.Parse(response.Content.ReadAsStream());
+    return doc
+        .RootElement.GetProperty("embedding")
+        .GetProperty("values")
+        .EnumerateArray()
+        .Select(v => v.GetSingle())
+        .ToList();
 }
+```
+```cs
+// dotnet add package Turbopuffer
+// dotnet add package OpenAI
+using System;
+using System.ClientModel;
+using System.Collections.Generic;
+using System.Linq;
+using OpenAI;
+using OpenAI.Embeddings;
+using Turbopuffer;
+using Turbopuffer.Models.Namespaces;
+
+using var tpuf = new TurbopufferClient
+{
+    Region = "gcp-us-central1", // choose best region: https://turbopuffer.com/docs/regions
+};
+
+var namespaceName =
+    Environment.GetEnvironmentVariable("TURBOPUFFER_NAMESPACE")
+    ?? $"quickstart-{Guid.NewGuid().ToString("N").Substring(0, 8)}";
+var ns = tpuf.Namespace(namespaceName);
 
 // Upsert documents with vectors and attributes
-await ns.write({
-  upsert_rows: [
+await ns.Write(
+    new NamespaceWriteParams
     {
-      id: 1,
-      vector: await embed("walrus narwhal"),
-      category: ["mammal"],
-      public: true,
-      text: "walrus narwhal",
-    },
-    {
-      id: 2,
-      vector: await embed("pufferfish clownfish swordfish"),
-      category: ["fish"],
-      public: false,
-      text: "pufferfish clownfish swordfish",
-    },
-  ],
-  distance_metric: "cosine_distance",
-  schema: {
-    text: {
-      // Configure FTS/BM25. Other attributes have inferred types (`public`: int).
-      type: "string",
-      // More schema & FTS options:
-      // https://turbopuffer.com/docs/write#schema
-      full_text_search: true,
-      regex: true,
-    },
-    category: { type: "[]string", full_text_search: true },
-  },
-});
+        UpsertRows =
+        [
+            new Row()
+                .Set("id", 1)
+                .Set("vector", Embed("walrus narwhal"))
+                .Set("category", new[] { "mammal" })
+                .Set("public", true)
+                .Set("text", "walrus narwhal"),
+            new Row()
+                .Set("id", 2)
+                .Set("vector", Embed("pufferfish clownfish swordfish"))
+                .Set("category", new[] { "fish" })
+                .Set("public", false)
+                .Set("text", "pufferfish clownfish swordfish"),
+        ],
+        DistanceMetric = DistanceMetric.CosineDistance,
+        Schema = new Dictionary<string, AttributeSchemaConfig>
+        {
+            ["text"] = new AttributeSchemaConfig
+            {
+                Type = "string",
+                // More schema & FTS options:
+                // https://turbopuffer.com/docs/write#schema
+                FullTextSearch = true,
+                Regex = true,
+            },
+            ["category"] = new AttributeSchemaConfig { Type = "[]string", FullTextSearch = true },
+        },
+    }
+);
 
 // Query nearest neighbors with a filter
-let result = await ns.query({
-  rank_by: ["vector", "ANN", await embed("arctic sea mammal")],
-  limit: 10,
-  filters: ["public", "Eq", true],
-});
-console.log(result.rows);
-// [{ '$dist': 0.42773545, id: 1 }]
+var queryResult = await ns.Query(
+    new NamespaceQueryParams
+    {
+        RankBy = RankBy.Ann("vector", Embed("arctic sea mammal")),
+        Limit = 10,
+        Filters = Filter.Eq("public", true),
+    }
+);
+foreach (var row in queryResult.GetRows())
+{
+    Console.WriteLine(row);
+}
 
 // Full-text search on an attribute
 // To combine FTS and vector search concurrently, see:
 // https://turbopuffer.com/docs/hybrid-search
-result = await ns.query({
-  limit: 10,
-  filters: ["public", "Eq", true],
-  rank_by: ["Sum", [
-    ["Product", 2, ["category", "BM25", "mammal"]],
-    ["text", "BM25", "quick walrus"],
-  ]],
-});
-console.log(result.rows);
-// [{ '$dist': 0.7549128, id: 1 }]
+var ftsResult = await ns.Query(
+    new NamespaceQueryParams
+    {
+        Limit = 10,
+        Filters = Filter.Eq("public", true),
+        RankBy = RankByText.Sum(
+            RankByText.Product(2, RankByText.BM25("category", "mammal")),
+            RankByText.BM25("text", "quick walrus")
+        ),
+    }
+);
+foreach (var row in ftsResult.GetRows())
+{
+    Console.WriteLine(row);
+}
 
 // Regex filter — matches "pufferfish", "swordfish", "clownfish"
-result = await ns.query({
-  limit: 10,
-  filters: ["text", "Regex", "\\w+fish"],
-});
-console.log(result.rows);
+var regexResult = await ns.Query(
+    new NamespaceQueryParams { Limit = 10, Filters = Filter.Regex("text", "\\w+fish") }
+);
+foreach (var row in regexResult.GetRows())
+{
+    Console.WriteLine(row);
+}
 
 // Count documents grouped by category
-const groupedResult = await ns.query({
-  aggregate_by: { count_by_category: ["Count"] },
-  group_by: ["category"],
-});
-console.log(groupedResult.aggregation_groups);
-// [
-//   { category: ["fish"], count_by_category: 1 },
-//   { category: ["mammal"], count_by_category: 1 },
-// ]
-```
-```typescript
-// $ npm install @turbopuffer/turbopuffer openai
-import { Turbopuffer } from "@turbopuffer/turbopuffer";
-import OpenAI from "openai";
-
-const tpuf = new Turbopuffer({
-  apiKey: process.env.TURBOPUFFER_API_KEY, // created here: https://turbopuffer.com/dashboard
-  region: "gcp-us-central1", // choose best region: https://turbopuffer.com/docs/regions
-});
-
-const namespace = process.env.TURBOPUFFER_NAMESPACE ?? `quickstart-${Math.random().toString(36).slice(2, 10)}`;
-const ns = tpuf.namespace(namespace);
-const fireworks = new OpenAI({
-  apiKey: process.env.FIREWORKS_API_KEY,
-  baseURL: "https://api.fireworks.ai/inference/v1",
-});
+var groupedResult = await ns.Query(
+    new NamespaceQueryParams
+    {
+        AggregateBy = new Dictionary<string, AggregateBy>
+        {
+            ["count_by_category"] = AggregateBy.Count("id"),
+        },
+        GroupBy = [GroupBy.Attr("category")],
+    }
+);
+foreach (var group in groupedResult.GetAggregationGroups())
+{
+    Console.WriteLine(group);
+}
 
 // Create an embedding with Qwen on Fireworks.
 // Requires FIREWORKS_API_KEY to be set (https://fireworks.ai/settings/users/api-keys)
-async function embed(text: string): Promise<number[]> {
-  return (
-    await fireworks.embeddings.create({
-      model: "fireworks/qwen3-embedding-8b",
-      input: text,
-      encoding_format: "float",
-    })
-  ).data[0].embedding;
+static List<float> Embed(string text)
+{
+    var client = new EmbeddingClient(
+        "fireworks/qwen3-embedding-8b",
+        new ApiKeyCredential(Environment.GetEnvironmentVariable("FIREWORKS_API_KEY")!),
+        new OpenAIClientOptions { Endpoint = new Uri("https://api.fireworks.ai/inference/v1") }
+    );
+    return [.. client.GenerateEmbedding(text).Value.ToFloats().Span];
 }
+```
+```cs
+// dotnet add package Turbopuffer
+// dotnet add package OpenAI
+using System;
+using System.ClientModel;
+using System.Collections.Generic;
+using System.Linq;
+using OpenAI;
+using OpenAI.Embeddings;
+using Turbopuffer;
+using Turbopuffer.Models.Namespaces;
+
+using var tpuf = new TurbopufferClient
+{
+    Region = "gcp-us-central1", // choose best region: https://turbopuffer.com/docs/regions
+};
+
+var namespaceName =
+    Environment.GetEnvironmentVariable("TURBOPUFFER_NAMESPACE")
+    ?? $"quickstart-{Guid.NewGuid().ToString("N").Substring(0, 8)}";
+var ns = tpuf.Namespace(namespaceName);
 
 // Upsert documents with vectors and attributes
-await ns.write({
-  upsert_rows: [
+await ns.Write(
+    new NamespaceWriteParams
     {
-      id: 1,
-      vector: await embed("walrus narwhal"),
-      category: ["mammal"],
-      public: true,
-      text: "walrus narwhal",
-    },
-    {
-      id: 2,
-      vector: await embed("pufferfish clownfish swordfish"),
-      category: ["fish"],
-      public: false,
-      text: "pufferfish clownfish swordfish",
-    },
-  ],
-  distance_metric: "cosine_distance",
-  schema: {
-    text: {
-      // Configure FTS/BM25. Other attributes have inferred types (`public`: int).
-      type: "string",
-      // More schema & FTS options:
-      // https://turbopuffer.com/docs/write#schema
-      full_text_search: true,
-      regex: true,
-    },
-    category: { type: "[]string", full_text_search: true },
-  },
-});
+        UpsertRows =
+        [
+            new Row()
+                .Set("id", 1)
+                .Set("vector", Embed("walrus narwhal"))
+                .Set("category", new[] { "mammal" })
+                .Set("public", true)
+                .Set("text", "walrus narwhal"),
+            new Row()
+                .Set("id", 2)
+                .Set("vector", Embed("pufferfish clownfish swordfish"))
+                .Set("category", new[] { "fish" })
+                .Set("public", false)
+                .Set("text", "pufferfish clownfish swordfish"),
+        ],
+        DistanceMetric = DistanceMetric.CosineDistance,
+        Schema = new Dictionary<string, AttributeSchemaConfig>
+        {
+            ["text"] = new AttributeSchemaConfig
+            {
+                Type = "string",
+                // More schema & FTS options:
+                // https://turbopuffer.com/docs/write#schema
+                FullTextSearch = true,
+                Regex = true,
+            },
+            ["category"] = new AttributeSchemaConfig { Type = "[]string", FullTextSearch = true },
+        },
+    }
+);
 
 // Query nearest neighbors with a filter
-let result = await ns.query({
-  rank_by: ["vector", "ANN", await embed("arctic sea mammal")],
-  limit: 10,
-  filters: ["public", "Eq", true],
-});
-console.log(result.rows);
-// [{ '$dist': 0.42773545, id: 1 }]
+var queryResult = await ns.Query(
+    new NamespaceQueryParams
+    {
+        RankBy = RankBy.Ann("vector", Embed("arctic sea mammal")),
+        Limit = 10,
+        Filters = Filter.Eq("public", true),
+    }
+);
+foreach (var row in queryResult.GetRows())
+{
+    Console.WriteLine(row);
+}
 
 // Full-text search on an attribute
 // To combine FTS and vector search concurrently, see:
 // https://turbopuffer.com/docs/hybrid-search
-result = await ns.query({
-  limit: 10,
-  filters: ["public", "Eq", true],
-  rank_by: ["Sum", [
-    ["Product", 2, ["category", "BM25", "mammal"]],
-    ["text", "BM25", "quick walrus"],
-  ]],
-});
-console.log(result.rows);
-// [{ '$dist': 0.7549128, id: 1 }]
+var ftsResult = await ns.Query(
+    new NamespaceQueryParams
+    {
+        Limit = 10,
+        Filters = Filter.Eq("public", true),
+        RankBy = RankByText.Sum(
+            RankByText.Product(2, RankByText.BM25("category", "mammal")),
+            RankByText.BM25("text", "quick walrus")
+        ),
+    }
+);
+foreach (var row in ftsResult.GetRows())
+{
+    Console.WriteLine(row);
+}
 
 // Regex filter — matches "pufferfish", "swordfish", "clownfish"
-result = await ns.query({
-  limit: 10,
-  filters: ["text", "Regex", "\\w+fish"],
-});
-console.log(result.rows);
+var regexResult = await ns.Query(
+    new NamespaceQueryParams { Limit = 10, Filters = Filter.Regex("text", "\\w+fish") }
+);
+foreach (var row in regexResult.GetRows())
+{
+    Console.WriteLine(row);
+}
 
 // Count documents grouped by category
-const groupedResult = await ns.query({
-  aggregate_by: { count_by_category: ["Count"] },
-  group_by: ["category"],
-});
-console.log(groupedResult.aggregation_groups);
-// [
-//   { category: ["fish"], count_by_category: 1 },
-//   { category: ["mammal"], count_by_category: 1 },
-// ]
-```
-```typescript
-// $ npm install @turbopuffer/turbopuffer voyageai
-import { Turbopuffer } from "@turbopuffer/turbopuffer";
-import { VoyageAIClient } from "voyageai";
-
-const tpuf = new Turbopuffer({
-  apiKey: process.env.TURBOPUFFER_API_KEY, // created here: https://turbopuffer.com/dashboard
-  region: "gcp-us-central1", // choose best region: https://turbopuffer.com/docs/regions
-});
-
-const namespace = process.env.TURBOPUFFER_NAMESPACE ?? `quickstart-${Math.random().toString(36).slice(2, 10)}`;
-const ns = tpuf.namespace(namespace);
-const voyage = new VoyageAIClient({ apiKey: process.env.VOYAGE_API_KEY });
+var groupedResult = await ns.Query(
+    new NamespaceQueryParams
+    {
+        AggregateBy = new Dictionary<string, AggregateBy>
+        {
+            ["count_by_category"] = AggregateBy.Count("id"),
+        },
+        GroupBy = [GroupBy.Attr("category")],
+    }
+);
+foreach (var group in groupedResult.GetAggregationGroups())
+{
+    Console.WriteLine(group);
+}
 
 // Create an embedding with Voyage.
 // Requires VOYAGE_API_KEY to be set:
 // https://dashboard.voyageai.com/organization/api-keys
-async function embed(text: string): Promise<number[]> {
-  return (await voyage.embed({
-    input: text,
-    model: "voyage-4-lite",
-  })).data[0].embedding;
+static List<float> Embed(string text)
+{
+    var client = new EmbeddingClient(
+        "voyage-4-lite",
+        new ApiKeyCredential(Environment.GetEnvironmentVariable("VOYAGE_API_KEY")!),
+        new OpenAIClientOptions { Endpoint = new Uri("https://api.voyageai.com/v1") }
+    );
+    return [.. client.GenerateEmbedding(text).Value.ToFloats().Span];
 }
-
-// Upsert documents with vectors and attributes
-await ns.write({
-  upsert_rows: [
-    {
-      id: 1,
-      vector: await embed("walrus narwhal"),
-      category: ["mammal"],
-      public: true,
-      text: "walrus narwhal",
-    },
-    {
-      id: 2,
-      vector: await embed("pufferfish clownfish swordfish"),
-      category: ["fish"],
-      public: false,
-      text: "pufferfish clownfish swordfish",
-    },
-  ],
-  distance_metric: "cosine_distance",
-  schema: {
-    text: {
-      // Configure FTS/BM25. Other attributes have inferred
-      // types (`category`: str, `public`: int).
-      type: "string",
-      // More schema & FTS options:
-      // https://turbopuffer.com/docs/write#schema
-      full_text_search: true,
-      regex: true,
-    },
-    category: { type: "[]string", full_text_search: true },
-  },
-});
-
-// Query nearest neighbors with a filter
-let result = await ns.query({
-  rank_by: ["vector", "ANN", await embed("arctic sea mammal")],
-  limit: 10,
-  filters: ["public", "Eq", true],
-});
-console.log(result.rows);
-// [{ '$dist': 0.42773545, id: 1 }]
-
-// Full-text search on an attribute
-// To combine FTS and vector search concurrently, see:
-// https://turbopuffer.com/docs/hybrid-search
-result = await ns.query({
-  limit: 10,
-  filters: ["public", "Eq", true],
-  rank_by: ["Sum", [
-    ["Product", 2, ["category", "BM25", "mammal"]],
-    ["text", "BM25", "quick walrus"],
-  ]],
-});
-console.log(result.rows);
-// [{ '$dist': 0.7549128, id: 1 }]
-
-// Regex filter — matches "pufferfish", "swordfish", "clownfish"
-result = await ns.query({
-  limit: 10,
-  filters: ["text", "Regex", "\\w+fish"],
-});
-console.log(result.rows);
-
-// Count documents grouped by category
-const groupedResult = await ns.query({
-  aggregate_by: { count_by_category: ["Count"] },
-  group_by: ["category"],
-});
-console.log(groupedResult.aggregation_groups);
-// [
-//   { category: ["fish"], count_by_category: 1 },
-//   { category: ["mammal"], count_by_category: 1 },
-// ]
 ```
 ```go
 package main
@@ -2757,9 +2774,9 @@ func main() {
 				},
 			},
 			DistanceMetric: turbopuffer.DistanceMetricCosineDistance,
-			Schema: map[string]turbopuffer.AttributeSchemaConfigParam{
+			Schema: map[string]turbopuffer.AttributeSchemaParam{
 				// Configure FTS/BM25, other attributes have inferred types (category: str, public: int)
-				"text": {
+				"text": {AttributeSchemaConfig: &turbopuffer.AttributeSchemaConfigParam{
 					Type:           "string",
 					FullTextSearch: &turbopuffer.FullTextSearchConfigParam{},
 					// Native embeddings. Check the model is available in your region:
@@ -2768,7 +2785,7 @@ func main() {
 						Model: "nvidia/nemotron-3-embed-8b",
 						Dims:  param.NewOpt[int64](1024),
 					},
-				},
+				}},
 			},
 		},
 	)
@@ -2929,16 +2946,16 @@ func main() {
 				},
 			},
 			DistanceMetric: turbopuffer.DistanceMetricCosineDistance,
-			Schema: map[string]turbopuffer.AttributeSchemaConfigParam{
-				"text": {
+			Schema: map[string]turbopuffer.AttributeSchemaParam{
+				"text": {AttributeSchemaConfig: &turbopuffer.AttributeSchemaConfigParam{
 					Type:           "string",
 					FullTextSearch: &turbopuffer.FullTextSearchConfigParam{},
 					Regex:          param.NewOpt(true),
-				},
-				"category": {
+				}},
+				"category": {AttributeSchemaConfig: &turbopuffer.AttributeSchemaConfigParam{
 					Type:           "[]string",
 					FullTextSearch: &turbopuffer.FullTextSearchConfigParam{},
-				},
+				}},
 			},
 		},
 	)
@@ -3091,16 +3108,16 @@ func main() {
 				},
 			},
 			DistanceMetric: turbopuffer.DistanceMetricCosineDistance,
-			Schema: map[string]turbopuffer.AttributeSchemaConfigParam{
-				"text": {
+			Schema: map[string]turbopuffer.AttributeSchemaParam{
+				"text": {AttributeSchemaConfig: &turbopuffer.AttributeSchemaConfigParam{
 					Type:           "string",
 					FullTextSearch: &turbopuffer.FullTextSearchConfigParam{},
 					Regex:          param.NewOpt(true),
-				},
-				"category": {
+				}},
+				"category": {AttributeSchemaConfig: &turbopuffer.AttributeSchemaConfigParam{
 					Type:           "[]string",
 					FullTextSearch: &turbopuffer.FullTextSearchConfigParam{},
-				},
+				}},
 			},
 		},
 	)
@@ -3256,16 +3273,16 @@ func main() {
 				},
 			},
 			DistanceMetric: turbopuffer.DistanceMetricCosineDistance,
-			Schema: map[string]turbopuffer.AttributeSchemaConfigParam{
-				"text": {
+			Schema: map[string]turbopuffer.AttributeSchemaParam{
+				"text": {AttributeSchemaConfig: &turbopuffer.AttributeSchemaConfigParam{
 					Type:           "string",
 					FullTextSearch: &turbopuffer.FullTextSearchConfigParam{},
 					Regex:          param.NewOpt(true),
-				},
-				"category": {
+				}},
+				"category": {AttributeSchemaConfig: &turbopuffer.AttributeSchemaConfigParam{
 					Type:           "[]string",
 					FullTextSearch: &turbopuffer.FullTextSearchConfigParam{},
-				},
+				}},
 			},
 		},
 	)
@@ -3422,16 +3439,16 @@ func main() {
 				},
 			},
 			DistanceMetric: turbopuffer.DistanceMetricCosineDistance,
-			Schema: map[string]turbopuffer.AttributeSchemaConfigParam{
-				"text": {
+			Schema: map[string]turbopuffer.AttributeSchemaParam{
+				"text": {AttributeSchemaConfig: &turbopuffer.AttributeSchemaConfigParam{
 					Type:           "string",
 					FullTextSearch: &turbopuffer.FullTextSearchConfigParam{},
 					Regex:          param.NewOpt(true),
-				},
-				"category": {
+				}},
+				"category": {AttributeSchemaConfig: &turbopuffer.AttributeSchemaConfigParam{
 					Type:           "[]string",
 					FullTextSearch: &turbopuffer.FullTextSearchConfigParam{},
-				},
+				}},
 			},
 		},
 	)
@@ -4175,663 +4192,586 @@ class QuickStartVoyage {
   }
 }
 ```
-```cs
-// dotnet add package Turbopuffer
-using System;
-using System.Collections.Generic;
-using Turbopuffer;
-using Turbopuffer.Models.Namespaces;
+```python
+# $ pip install turbopuffer
+# Sample Python notebook:
+# https://colab.research.google.com/drive/17i4sfFTeJQkINCxjBaOGOZeENZr4ZaTE
+import os
+import uuid
 
-using var tpuf = new TurbopufferClient
-{
-    // API tokens are created in the dashboard: https://turbopuffer.com/dashboard
-    // Loaded from TURBOPUFFER_API_KEY env var by default. Override if necessary:
-    // ApiKey = "...",
+import turbopuffer
 
-    // Pick the right region: https://turbopuffer.com/docs/regions
-    Region = "gcp-us-central1",
-};
+tpuf = turbopuffer.Turbopuffer(
+    api_key=os.getenv("TURBOPUFFER_API_KEY"), # created here: https://turbopuffer.com/dashboard
+    region="gcp-us-central1", # choose best region: https://turbopuffer.com/docs/regions
+)
 
-var ns = tpuf.Namespace("quickstart-example-csharp");
+namespace = os.getenv("TURBOPUFFER_NAMESPACE", f"quickstart-{uuid.uuid4().hex[:8]}")
+ns = tpuf.namespace(namespace)
 
-// Upsert documents with attributes
-await ns.Write(
-    new NamespaceWriteParams
-    {
-        UpsertRows =
-        [
-            new Row()
-                .Set("id", 1)
-                .Set("category", "mammal")
-                .Set("public", 1)
-                .Set("text", "walrus narwhal"),
-            new Row()
-                .Set("id", 2)
-                .Set("category", "fish")
-                .Set("public", 0)
-                .Set("text", "pufferfish clownfish swordfish"),
-        ],
-        DistanceMetric = DistanceMetric.CosineDistance,
-        Schema = new Dictionary<string, AttributeSchemaConfig>
+# Upsert documents with attributes
+ns.write(
+    upsert_rows=[
         {
-            ["text"] = new AttributeSchemaConfig
-            {
-                Type = "string",
-                // More schema & FTS options
-                // https://turbopuffer.com/docs/write#schema
-                FullTextSearch = true,
-                // Native embeddings. Check the model is available in your region:
-                // https://turbopuffer.com/docs/embedding#models
-                Embed = new AttributeEmbedConfig { Model = "nvidia/nemotron-3-embed-8b", Dims = 1024 },
-            },
+            'id': 1,
+            'category': ["mammal"],
+            'public': True,
+            'text': "walrus narwhal",
+        },
+        {
+            'id': 2,
+            'category': ["fish"],
+            'public': False,
+            'text': "pufferfish clownfish swordfish",
+        },
+    ],
+    distance_metric='cosine_distance',
+    schema={
+        "text": {
+            # Configure FTS/BM25. Other attributes get inferred types.
+            "type": "string",
+            # More schema & FTS options:
+            # https://turbopuffer.com/docs/write#schema
+            "full_text_search": True,
+            "regex": True,
+            # Native embeddings. Check the model is available in your region:
+            # https://turbopuffer.com/docs/embedding#models
+            "embed": {"model": "nvidia/nemotron-3-embed-8b", "dims": 1024},
+        },
+        "category": {
+            "type": "[]string",
+            "full_text_search": True,
         },
     }
-);
+)
 
-// Query nearest neighbors with filter
-var queryResult = await ns.Query(
-    new NamespaceQueryParams
-    {
-        RankBy = RankBy.Ann("text", Expr.Embed("arctic sea mammal")),
-        Limit = 10,
-        Filters = Filter.And(Filter.Eq("category", "mammal"), Filter.Eq("public", 1)),
-        IncludeAttributes = new List<string> { "category" },
-    }
-);
-foreach (var row in queryResult.GetRows())
-{
-    Console.WriteLine(row);
-}
-// {"$dist": ..., "id": 1, "category": "mammal"}
+# Query nearest neighbors with a filter
+print(ns.query(
+  rank_by=("text", "ANN", ("Embed", "arctic sea mammal")),
+  limit=10,
+  filters=("public", "Eq", True),
+))
+# [Row(id=1, $dist=...)]
 
-// Full-text search on an attribute
-// To combine FTS and vector search concurrently and fuse results, see https://turbopuffer.com/docs/hybrid-search
-var ftsResult = await ns.Query(
-    new NamespaceQueryParams
-    {
-        Limit = 10,
-        Filters = Filter.Eq("category", "mammal"),
-        RankBy = RankByText.BM25("text", "quick walrus"),
-    }
-);
-foreach (var row in ftsResult.GetRows())
-{
-    Console.WriteLine(row);
-}
-// {"$dist": 0.7549128, "id": 1}
+# Full-text search on an attribute
+# To combine FTS and vector search concurrently, see:
+# https://turbopuffer.com/docs/hybrid-search
+print(ns.query(
+  limit=10,
+  filters=("public", "Eq", True),
+  rank_by=("Sum", [
+      ("Product", 2, ("category", "BM25", "mammal")),
+      ("text", "BM25", "quick walrus"),
+  ]),
+))
+# [Row(id=1, vector=None, $dist=0.7549128)]
 
-// Documents are updated by passing new data for an existing ID
-await ns.Write(
-    new NamespaceWriteParams
-    {
-        UpsertRows =
-        [
-            new Row().Set("id", 1).Set("text", "beluga whale").Set("public", 1),
-            new Row().Set("id", 2).Set("text", "manta ray").Set("public", 1),
-            new Row().Set("id", 3).Set("text", "octopus cuttlefish").Set("public", 1),
-        ],
-        DistanceMetric = DistanceMetric.CosineDistance,
-    }
-);
+# Regex filter — matches "pufferfish", "swordfish", "clownfish"
+print(ns.query(
+  limit=10,
+  filters=("text", "Regex", "\\w+fish"),
+))
 
-// Documents are deleted by ID.
-await ns.Write(new NamespaceWriteParams { Deletes = [1L, 3L] });
+# Count documents grouped by category
+grouped_result = ns.query(
+    aggregate_by={"count_by_category": ("Count",)},
+    group_by=["category"],
+)
+print(grouped_result.aggregation_groups)
+# [Row(category=['fish'], count_by_category=1), Row(category=['mammal'], count_by_category=1)]
 ```
-```cs
-// dotnet add package Turbopuffer
-using System;
-using System.Collections.Generic;
-using System.Linq;
-using System.Net.Http;
-using System.Net.Http.Headers;
-using System.Text;
-using System.Text.Json;
-using Turbopuffer;
-using Turbopuffer.Models.Namespaces;
+```python
+# $ pip install turbopuffer sentence-transformers
+# Sample Python notebook:
+# https://colab.research.google.com/drive/17i4sfFTeJQkINCxjBaOGOZeENZr4ZaTE
+import os
+import uuid
+from typing import List
 
-using var tpuf = new TurbopufferClient
-{
-    Region = "gcp-us-central1", // choose best region: https://turbopuffer.com/docs/regions
-};
+import turbopuffer
+from sentence_transformers import SentenceTransformer
 
-var namespaceName =
-    Environment.GetEnvironmentVariable("TURBOPUFFER_NAMESPACE")
-    ?? $"quickstart-{Guid.NewGuid().ToString("N").Substring(0, 8)}";
-var ns = tpuf.Namespace(namespaceName);
+tpuf = turbopuffer.Turbopuffer(
+    api_key=os.getenv("TURBOPUFFER_API_KEY"), # created here: https://turbopuffer.com/dashboard
+    region="gcp-us-central1", # choose best region: https://turbopuffer.com/docs/regions
+)
 
-// Upsert documents with vectors and attributes
-await ns.Write(
-    new NamespaceWriteParams
-    {
-        UpsertRows =
-        [
-            new Row()
-                .Set("id", 1)
-                .Set("vector", Embed("walrus narwhal"))
-                .Set("category", new[] { "mammal" })
-                .Set("public", true)
-                .Set("text", "walrus narwhal"),
-            new Row()
-                .Set("id", 2)
-                .Set("vector", Embed("pufferfish clownfish swordfish"))
-                .Set("category", new[] { "fish" })
-                .Set("public", false)
-                .Set("text", "pufferfish clownfish swordfish"),
-        ],
-        DistanceMetric = DistanceMetric.CosineDistance,
-        Schema = new Dictionary<string, AttributeSchemaConfig>
+namespace = os.getenv("TURBOPUFFER_NAMESPACE", f"quickstart-{uuid.uuid4().hex[:8]}")
+ns = tpuf.namespace(namespace)
+
+# Local embeddings with BGE — no API key needed.
+# Model is downloaded on first run (~130 MB).
+bge = SentenceTransformer("BAAI/bge-small-en-v1.5")
+
+def embed(text: str) -> List[float]:
+    return bge.encode(text).tolist()
+
+# Upsert documents with vectors and attributes
+ns.write(
+    upsert_rows=[
         {
-            ["text"] = new AttributeSchemaConfig
-            {
-                Type = "string",
-                // More schema & FTS options:
-                // https://turbopuffer.com/docs/write#schema
-                FullTextSearch = true,
-                Regex = true,
-            },
-            ["category"] = new AttributeSchemaConfig { Type = "[]string", FullTextSearch = true },
+            'id': 1,
+            'vector': embed("walrus narwhal"),
+            'category': ["mammal"],
+            'public': True,
+            'text': "walrus narwhal",
+        },
+        {
+            'id': 2,
+            'vector': embed("pufferfish clownfish swordfish"),
+            'category': ["fish"],
+            'public': False,
+            'text': "pufferfish clownfish swordfish",
+        },
+    ],
+    distance_metric='cosine_distance',
+    schema={
+        "text": {
+            # Configure FTS/BM25. Other attributes get inferred types (`public`: int).
+            "type": "string",
+            # More schema & FTS options:
+            # https://turbopuffer.com/docs/write#schema
+            "full_text_search": True,
+            "regex": True,
+        },
+        "category": {
+            "type": "[]string",
+            "full_text_search": True,
         },
     }
-);
+)
 
-// Query nearest neighbors with a filter
-var queryResult = await ns.Query(
-    new NamespaceQueryParams
-    {
-        RankBy = RankBy.Ann("vector", Embed("arctic sea mammal")),
-        Limit = 10,
-        Filters = Filter.Eq("public", true),
-    }
-);
-foreach (var row in queryResult.GetRows())
-{
-    Console.WriteLine(row);
-}
+# Query nearest neighbors with a filter
+print(ns.query(
+  rank_by=("vector", "ANN", embed("arctic sea mammal")),
+  limit=10,
+  filters=("public", "Eq", True),
+))
+# [Row(id=1, vector=None, $dist=0.42773545)]
 
-// Full-text search on an attribute
-// To combine FTS and vector search concurrently, see:
-// https://turbopuffer.com/docs/hybrid-search
-var ftsResult = await ns.Query(
-    new NamespaceQueryParams
-    {
-        Limit = 10,
-        Filters = Filter.Eq("public", true),
-        RankBy = RankByText.Sum(
-            RankByText.Product(2, RankByText.BM25("category", "mammal")),
-            RankByText.BM25("text", "quick walrus")
-        ),
-    }
-);
-foreach (var row in ftsResult.GetRows())
-{
-    Console.WriteLine(row);
-}
+# Full-text search on an attribute
+# To combine FTS and vector search concurrently, see:
+# https://turbopuffer.com/docs/hybrid-search
+print(ns.query(
+  limit=10,
+  filters=("public", "Eq", True),
+  rank_by=("Sum", [
+      ("Product", 2, ("category", "BM25", "mammal")),
+      ("text", "BM25", "quick walrus"),
+  ]),
+))
+# [Row(id=1, vector=None, $dist=0.7549128)]
 
-// Regex filter — matches "pufferfish", "swordfish", "clownfish"
-var regexResult = await ns.Query(
-    new NamespaceQueryParams { Limit = 10, Filters = Filter.Regex("text", "\\w+fish") }
-);
-foreach (var row in regexResult.GetRows())
-{
-    Console.WriteLine(row);
-}
+# Regex filter — matches "pufferfish", "swordfish", "clownfish"
+print(ns.query(
+  limit=10,
+  filters=("text", "Regex", "\\w+fish"),
+))
 
-// Count documents grouped by category
-var groupedResult = await ns.Query(
-    new NamespaceQueryParams
-    {
-        AggregateBy = new Dictionary<string, AggregateBy>
-        {
-            ["count_by_category"] = AggregateBy.Count("id"),
-        },
-        GroupBy = [GroupBy.Attr("category")],
-    }
-);
-foreach (var group in groupedResult.GetAggregationGroups())
-{
-    Console.WriteLine(group);
-}
-
-// Create an embedding with Cohere.
-// Requires COHERE_API_KEY to be set (https://dashboard.cohere.com/api-keys)
-static List<float> Embed(string text)
-{
-    using var http = new HttpClient();
-    var request = new HttpRequestMessage(HttpMethod.Post, "https://api.cohere.com/v2/embed")
-    {
-        Content = new StringContent(
-            JsonSerializer.Serialize(
-                new
-                {
-                    model = "embed-v4.0",
-                    input_type = "search_document",
-                    texts = new[] { text },
-                    embedding_types = new[] { "float" },
-                }
-            ),
-            Encoding.UTF8,
-            "application/json"
-        ),
-    };
-    request.Headers.Authorization = new AuthenticationHeaderValue(
-        "Bearer",
-        Environment.GetEnvironmentVariable("COHERE_API_KEY")
-    );
-    var response = http.Send(request);
-    response.EnsureSuccessStatusCode();
-    using var doc = JsonDocument.Parse(response.Content.ReadAsStream());
-    return doc
-        .RootElement.GetProperty("embeddings")
-        .GetProperty("float")[0]
-        .EnumerateArray()
-        .Select(v => v.GetSingle())
-        .ToList();
-}
+# Count documents grouped by category
+grouped_result = ns.query(
+    aggregate_by={"count_by_category": ("Count",)},
+    group_by=["category"],
+)
+print(grouped_result.aggregation_groups)
+# [Row(category=['fish'], count_by_category=1), Row(category=['mammal'], count_by_category=1)]
 ```
-```cs
-// dotnet add package Turbopuffer
-using System;
-using System.Collections.Generic;
-using System.Linq;
-using System.Net.Http;
-using System.Text;
-using System.Text.Json;
-using Turbopuffer;
-using Turbopuffer.Models.Namespaces;
+```python
+# $ pip install turbopuffer cohere
+# Sample Python notebook:
+# https://colab.research.google.com/drive/17i4sfFTeJQkINCxjBaOGOZeENZr4ZaTE
+import os
+import uuid
+from typing import List
 
-using var tpuf = new TurbopufferClient
-{
-    Region = "gcp-us-central1", // choose best region: https://turbopuffer.com/docs/regions
-};
+import turbopuffer
+from cohere import ClientV2
 
-var namespaceName =
-    Environment.GetEnvironmentVariable("TURBOPUFFER_NAMESPACE")
-    ?? $"quickstart-{Guid.NewGuid().ToString("N").Substring(0, 8)}";
-var ns = tpuf.Namespace(namespaceName);
+tpuf = turbopuffer.Turbopuffer(
+    api_key=os.getenv("TURBOPUFFER_API_KEY"), # created here: https://turbopuffer.com/dashboard
+    region="gcp-us-central1", # choose best region: https://turbopuffer.com/docs/regions
+)
 
-// Upsert documents with vectors and attributes
-await ns.Write(
-    new NamespaceWriteParams
-    {
-        UpsertRows =
-        [
-            new Row()
-                .Set("id", 1)
-                .Set("vector", Embed("walrus narwhal"))
-                .Set("category", new[] { "mammal" })
-                .Set("public", true)
-                .Set("text", "walrus narwhal"),
-            new Row()
-                .Set("id", 2)
-                .Set("vector", Embed("pufferfish clownfish swordfish"))
-                .Set("category", new[] { "fish" })
-                .Set("public", false)
-                .Set("text", "pufferfish clownfish swordfish"),
-        ],
-        DistanceMetric = DistanceMetric.CosineDistance,
-        Schema = new Dictionary<string, AttributeSchemaConfig>
+namespace = os.getenv("TURBOPUFFER_NAMESPACE", f"quickstart-{uuid.uuid4().hex[:8]}")
+ns = tpuf.namespace(namespace)
+cohere = ClientV2(api_key=os.environ["COHERE_API_KEY"])
+
+# Create an embedding with Cohere.
+# Requires COHERE_API_KEY to be set (https://dashboard.cohere.com/api-keys)
+def embed(text: str) -> List[float]:
+    return cohere.embed(
+        model="embed-v4.0",
+        input_type="search_document",
+        texts=[text],
+        embedding_types=["float"],
+    ).embeddings.float[0]
+
+# Upsert documents with vectors and attributes
+ns.write(
+    upsert_rows=[
         {
-            ["text"] = new AttributeSchemaConfig
-            {
-                Type = "string",
-                // More schema & FTS options:
-                // https://turbopuffer.com/docs/write#schema
-                FullTextSearch = true,
-                Regex = true,
-            },
-            ["category"] = new AttributeSchemaConfig { Type = "[]string", FullTextSearch = true },
+            'id': 1,
+            'vector': embed("walrus narwhal"),
+            'category': ["mammal"],
+            'public': True,
+            'text': "walrus narwhal",
+        },
+        {
+            'id': 2,
+            'vector': embed("pufferfish clownfish swordfish"),
+            'category': ["fish"],
+            'public': False,
+            'text': "pufferfish clownfish swordfish",
+        },
+    ],
+    distance_metric='cosine_distance',
+    schema={
+        "text": {
+            # Configure FTS/BM25. Other attributes get inferred types (`public`: int).
+            "type": "string",
+            # More schema & FTS options:
+            # https://turbopuffer.com/docs/write#schema
+            "full_text_search": True,
+            "regex": True,
+        },
+        "category": {
+            "type": "[]string",
+            "full_text_search": True,
         },
     }
-);
+)
 
-// Query nearest neighbors with a filter
-var queryResult = await ns.Query(
-    new NamespaceQueryParams
-    {
-        RankBy = RankBy.Ann("vector", Embed("arctic sea mammal")),
-        Limit = 10,
-        Filters = Filter.Eq("public", true),
-    }
-);
-foreach (var row in queryResult.GetRows())
-{
-    Console.WriteLine(row);
-}
+# Query nearest neighbors with a filter
+print(ns.query(
+  rank_by=("vector", "ANN", embed("arctic sea mammal")),
+  limit=10,
+  filters=("public", "Eq", True),
+))
+# [Row(id=1, vector=None, $dist=0.42773545)]
 
-// Full-text search on an attribute
-// To combine FTS and vector search concurrently, see:
-// https://turbopuffer.com/docs/hybrid-search
-var ftsResult = await ns.Query(
-    new NamespaceQueryParams
-    {
-        Limit = 10,
-        Filters = Filter.Eq("public", true),
-        RankBy = RankByText.Sum(
-            RankByText.Product(2, RankByText.BM25("category", "mammal")),
-            RankByText.BM25("text", "quick walrus")
-        ),
-    }
-);
-foreach (var row in ftsResult.GetRows())
-{
-    Console.WriteLine(row);
-}
+# Full-text search on an attribute
+# To combine FTS and vector search concurrently, see:
+# https://turbopuffer.com/docs/hybrid-search
+print(ns.query(
+  limit=10,
+  filters=("public", "Eq", True),
+  rank_by=("Sum", [
+      ("Product", 2, ("category", "BM25", "mammal")),
+      ("text", "BM25", "quick walrus"),
+  ]),
+))
+# [Row(id=1, vector=None, $dist=0.7549128)]
 
-// Regex filter — matches "pufferfish", "swordfish", "clownfish"
-var regexResult = await ns.Query(
-    new NamespaceQueryParams { Limit = 10, Filters = Filter.Regex("text", "\\w+fish") }
-);
-foreach (var row in regexResult.GetRows())
-{
-    Console.WriteLine(row);
-}
+# Regex filter — matches "pufferfish", "swordfish", "clownfish"
+print(ns.query(
+  limit=10,
+  filters=("text", "Regex", "\\w+fish"),
+))
 
-// Count documents grouped by category
-var groupedResult = await ns.Query(
-    new NamespaceQueryParams
-    {
-        AggregateBy = new Dictionary<string, AggregateBy>
-        {
-            ["count_by_category"] = AggregateBy.Count("id"),
-        },
-        GroupBy = [GroupBy.Attr("category")],
-    }
-);
-foreach (var group in groupedResult.GetAggregationGroups())
-{
-    Console.WriteLine(group);
-}
-
-// Create an embedding with Gemini.
-// Requires GEMINI_API_KEY to be set (https://aistudio.google.com/app/apikey)
-static List<float> Embed(string text)
-{
-    var apiKey = Environment.GetEnvironmentVariable("GEMINI_API_KEY");
-    using var http = new HttpClient();
-    var request = new HttpRequestMessage(
-        HttpMethod.Post,
-        "https://generativelanguage.googleapis.com/v1beta/models/gemini-embedding-001:embedContent?key="
-            + apiKey
-    )
-    {
-        Content = new StringContent(
-            JsonSerializer.Serialize(
-                new
-                {
-                    model = "models/gemini-embedding-001",
-                    content = new { parts = new[] { new { text } } },
-                    taskType = "RETRIEVAL_DOCUMENT",
-                }
-            ),
-            Encoding.UTF8,
-            "application/json"
-        ),
-    };
-    var response = http.Send(request);
-    response.EnsureSuccessStatusCode();
-    using var doc = JsonDocument.Parse(response.Content.ReadAsStream());
-    return doc
-        .RootElement.GetProperty("embedding")
-        .GetProperty("values")
-        .EnumerateArray()
-        .Select(v => v.GetSingle())
-        .ToList();
-}
+# Count documents grouped by category
+grouped_result = ns.query(
+    aggregate_by={"count_by_category": ("Count",)},
+    group_by=["category"],
+)
+print(grouped_result.aggregation_groups)
+# [Row(category=['fish'], count_by_category=1), Row(category=['mammal'], count_by_category=1)]
 ```
-```cs
-// dotnet add package Turbopuffer
-// dotnet add package OpenAI
-using System;
-using System.ClientModel;
-using System.Collections.Generic;
-using System.Linq;
-using OpenAI;
-using OpenAI.Embeddings;
-using Turbopuffer;
-using Turbopuffer.Models.Namespaces;
+```python
+# $ pip install turbopuffer google-genai
+# Sample Python notebook:
+# https://colab.research.google.com/drive/17i4sfFTeJQkINCxjBaOGOZeENZr4ZaTE
+import os
+import uuid
+from typing import List
 
-using var tpuf = new TurbopufferClient
-{
-    Region = "gcp-us-central1", // choose best region: https://turbopuffer.com/docs/regions
-};
+import turbopuffer
+from google.genai import Client
+from google.genai.types import EmbedContentConfig
 
-var namespaceName =
-    Environment.GetEnvironmentVariable("TURBOPUFFER_NAMESPACE")
-    ?? $"quickstart-{Guid.NewGuid().ToString("N").Substring(0, 8)}";
-var ns = tpuf.Namespace(namespaceName);
+tpuf = turbopuffer.Turbopuffer(
+    api_key=os.getenv("TURBOPUFFER_API_KEY"), # created here: https://turbopuffer.com/dashboard
+    region="gcp-us-central1", # choose best region: https://turbopuffer.com/docs/regions
+)
 
-// Upsert documents with vectors and attributes
-await ns.Write(
-    new NamespaceWriteParams
-    {
-        UpsertRows =
-        [
-            new Row()
-                .Set("id", 1)
-                .Set("vector", Embed("walrus narwhal"))
-                .Set("category", new[] { "mammal" })
-                .Set("public", true)
-                .Set("text", "walrus narwhal"),
-            new Row()
-                .Set("id", 2)
-                .Set("vector", Embed("pufferfish clownfish swordfish"))
-                .Set("category", new[] { "fish" })
-                .Set("public", false)
-                .Set("text", "pufferfish clownfish swordfish"),
-        ],
-        DistanceMetric = DistanceMetric.CosineDistance,
-        Schema = new Dictionary<string, AttributeSchemaConfig>
+namespace = os.getenv("TURBOPUFFER_NAMESPACE", f"quickstart-{uuid.uuid4().hex[:8]}")
+ns = tpuf.namespace(namespace)
+gemini = Client(api_key=os.environ["GEMINI_API_KEY"])
+
+# Create an embedding with Gemini.
+# Requires GEMINI_API_KEY to be set (https://aistudio.google.com/app/apikey)
+def embed(text: str) -> List[float]:
+    return gemini.models.embed_content(
+        model="gemini-embedding-001",
+        contents=text,
+        config=EmbedContentConfig(task_type="RETRIEVAL_DOCUMENT"),
+    ).embeddings[0].values
+
+# Upsert documents with vectors and attributes
+ns.write(
+    upsert_rows=[
         {
-            ["text"] = new AttributeSchemaConfig
-            {
-                Type = "string",
-                // More schema & FTS options:
-                // https://turbopuffer.com/docs/write#schema
-                FullTextSearch = true,
-                Regex = true,
-            },
-            ["category"] = new AttributeSchemaConfig { Type = "[]string", FullTextSearch = true },
+            'id': 1,
+            'vector': embed("walrus narwhal"),
+            'category': ["mammal"],
+            'public': True,
+            'text': "walrus narwhal",
+        },
+        {
+            'id': 2,
+            'vector': embed("pufferfish clownfish swordfish"),
+            'category': ["fish"],
+            'public': False,
+            'text': "pufferfish clownfish swordfish",
+        },
+    ],
+    distance_metric='cosine_distance',
+    schema={
+        "text": {
+            # Configure FTS/BM25. Other attributes get inferred types (`public`: int).
+            "type": "string",
+            # More schema & FTS options:
+            # https://turbopuffer.com/docs/write#schema
+            "full_text_search": True,
+            "regex": True,
+        },
+        "category": {
+            "type": "[]string",
+            "full_text_search": True,
         },
     }
-);
+)
 
-// Query nearest neighbors with a filter
-var queryResult = await ns.Query(
-    new NamespaceQueryParams
-    {
-        RankBy = RankBy.Ann("vector", Embed("arctic sea mammal")),
-        Limit = 10,
-        Filters = Filter.Eq("public", true),
-    }
-);
-foreach (var row in queryResult.GetRows())
-{
-    Console.WriteLine(row);
-}
+# Query nearest neighbors with a filter
+print(ns.query(
+  rank_by=("vector", "ANN", embed("arctic sea mammal")),
+  limit=10,
+  filters=("public", "Eq", True),
+))
+# [Row(id=1, vector=None, $dist=0.42773545)]
 
-// Full-text search on an attribute
-// To combine FTS and vector search concurrently, see:
-// https://turbopuffer.com/docs/hybrid-search
-var ftsResult = await ns.Query(
-    new NamespaceQueryParams
-    {
-        Limit = 10,
-        Filters = Filter.Eq("public", true),
-        RankBy = RankByText.Sum(
-            RankByText.Product(2, RankByText.BM25("category", "mammal")),
-            RankByText.BM25("text", "quick walrus")
-        ),
-    }
-);
-foreach (var row in ftsResult.GetRows())
-{
-    Console.WriteLine(row);
-}
+# Full-text search on an attribute
+# To combine FTS and vector search concurrently, see:
+# https://turbopuffer.com/docs/hybrid-search
+print(ns.query(
+  limit=10,
+  filters=("public", "Eq", True),
+  rank_by=("Sum", [
+      ("Product", 2, ("category", "BM25", "mammal")),
+      ("text", "BM25", "quick walrus"),
+  ]),
+))
+# [Row(id=1, vector=None, $dist=0.7549128)]
 
-// Regex filter — matches "pufferfish", "swordfish", "clownfish"
-var regexResult = await ns.Query(
-    new NamespaceQueryParams { Limit = 10, Filters = Filter.Regex("text", "\\w+fish") }
-);
-foreach (var row in regexResult.GetRows())
-{
-    Console.WriteLine(row);
-}
+# Regex filter — matches "pufferfish", "swordfish", "clownfish"
+print(ns.query(
+  limit=10,
+  filters=("text", "Regex", "\\w+fish"),
+))
 
-// Count documents grouped by category
-var groupedResult = await ns.Query(
-    new NamespaceQueryParams
-    {
-        AggregateBy = new Dictionary<string, AggregateBy>
-        {
-            ["count_by_category"] = AggregateBy.Count("id"),
-        },
-        GroupBy = [GroupBy.Attr("category")],
-    }
-);
-foreach (var group in groupedResult.GetAggregationGroups())
-{
-    Console.WriteLine(group);
-}
-
-// Create an embedding with Qwen on Fireworks.
-// Requires FIREWORKS_API_KEY to be set (https://fireworks.ai/settings/users/api-keys)
-static List<float> Embed(string text)
-{
-    var client = new EmbeddingClient(
-        "fireworks/qwen3-embedding-8b",
-        new ApiKeyCredential(Environment.GetEnvironmentVariable("FIREWORKS_API_KEY")!),
-        new OpenAIClientOptions { Endpoint = new Uri("https://api.fireworks.ai/inference/v1") }
-    );
-    return [.. client.GenerateEmbedding(text).Value.ToFloats().Span];
-}
+# Count documents grouped by category
+grouped_result = ns.query(
+    aggregate_by={"count_by_category": ("Count",)},
+    group_by=["category"],
+)
+print(grouped_result.aggregation_groups)
+# [Row(category=['fish'], count_by_category=1), Row(category=['mammal'], count_by_category=1)]
 ```
-```cs
-// dotnet add package Turbopuffer
-// dotnet add package OpenAI
-using System;
-using System.ClientModel;
-using System.Collections.Generic;
-using System.Linq;
-using OpenAI;
-using OpenAI.Embeddings;
-using Turbopuffer;
-using Turbopuffer.Models.Namespaces;
+```python
+# $ pip install turbopuffer openai
+# Sample Python notebook:
+# https://colab.research.google.com/drive/17i4sfFTeJQkINCxjBaOGOZeENZr4ZaTE
+import os
+import uuid
+from typing import List
 
-using var tpuf = new TurbopufferClient
-{
-    Region = "gcp-us-central1", // choose best region: https://turbopuffer.com/docs/regions
-};
+import turbopuffer
+from openai import OpenAI
 
-var namespaceName =
-    Environment.GetEnvironmentVariable("TURBOPUFFER_NAMESPACE")
-    ?? $"quickstart-{Guid.NewGuid().ToString("N").Substring(0, 8)}";
-var ns = tpuf.Namespace(namespaceName);
+tpuf = turbopuffer.Turbopuffer(
+    api_key=os.getenv("TURBOPUFFER_API_KEY"), # created here: https://turbopuffer.com/dashboard
+    region="gcp-us-central1", # choose best region: https://turbopuffer.com/docs/regions
+)
 
-// Upsert documents with vectors and attributes
-await ns.Write(
-    new NamespaceWriteParams
-    {
-        UpsertRows =
-        [
-            new Row()
-                .Set("id", 1)
-                .Set("vector", Embed("walrus narwhal"))
-                .Set("category", new[] { "mammal" })
-                .Set("public", true)
-                .Set("text", "walrus narwhal"),
-            new Row()
-                .Set("id", 2)
-                .Set("vector", Embed("pufferfish clownfish swordfish"))
-                .Set("category", new[] { "fish" })
-                .Set("public", false)
-                .Set("text", "pufferfish clownfish swordfish"),
-        ],
-        DistanceMetric = DistanceMetric.CosineDistance,
-        Schema = new Dictionary<string, AttributeSchemaConfig>
+namespace = os.getenv("TURBOPUFFER_NAMESPACE", f"quickstart-{uuid.uuid4().hex[:8]}")
+ns = tpuf.namespace(namespace)
+fireworks = OpenAI(
+    api_key=os.environ["FIREWORKS_API_KEY"],
+    base_url="https://api.fireworks.ai/inference/v1",
+)
+
+# Create an embedding with Qwen on Fireworks.
+# Requires FIREWORKS_API_KEY to be set (https://fireworks.ai/settings/users/api-keys)
+def embed(text: str) -> List[float]:
+    return fireworks.embeddings.create(
+        model="fireworks/qwen3-embedding-8b",
+        input=text,
+    ).data[0].embedding
+
+# Upsert documents with vectors and attributes
+ns.write(
+    upsert_rows=[
         {
-            ["text"] = new AttributeSchemaConfig
-            {
-                Type = "string",
-                // More schema & FTS options:
-                // https://turbopuffer.com/docs/write#schema
-                FullTextSearch = true,
-                Regex = true,
-            },
-            ["category"] = new AttributeSchemaConfig { Type = "[]string", FullTextSearch = true },
+            'id': 1,
+            'vector': embed("walrus narwhal"),
+            'category': ["mammal"],
+            'public': True,
+            'text': "walrus narwhal",
+        },
+        {
+            'id': 2,
+            'vector': embed("pufferfish clownfish swordfish"),
+            'category': ["fish"],
+            'public': False,
+            'text': "pufferfish clownfish swordfish",
+        },
+    ],
+    distance_metric='cosine_distance',
+    schema={
+        "text": {
+            # Configure FTS/BM25. Other attributes get inferred types (`public`: int).
+            "type": "string",
+            # More schema & FTS options:
+            # https://turbopuffer.com/docs/write#schema
+            "full_text_search": True,
+            "regex": True,
+        },
+        "category": {
+            "type": "[]string",
+            "full_text_search": True,
         },
     }
-);
+)
 
-// Query nearest neighbors with a filter
-var queryResult = await ns.Query(
-    new NamespaceQueryParams
-    {
-        RankBy = RankBy.Ann("vector", Embed("arctic sea mammal")),
-        Limit = 10,
-        Filters = Filter.Eq("public", true),
-    }
-);
-foreach (var row in queryResult.GetRows())
-{
-    Console.WriteLine(row);
-}
+# Query nearest neighbors with a filter
+print(ns.query(
+  rank_by=("vector", "ANN", embed("arctic sea mammal")),
+  limit=10,
+  filters=("public", "Eq", True),
+))
+# [Row(id=1, vector=None, $dist=0.42773545)]
 
-// Full-text search on an attribute
-// To combine FTS and vector search concurrently, see:
-// https://turbopuffer.com/docs/hybrid-search
-var ftsResult = await ns.Query(
-    new NamespaceQueryParams
-    {
-        Limit = 10,
-        Filters = Filter.Eq("public", true),
-        RankBy = RankByText.Sum(
-            RankByText.Product(2, RankByText.BM25("category", "mammal")),
-            RankByText.BM25("text", "quick walrus")
-        ),
-    }
-);
-foreach (var row in ftsResult.GetRows())
-{
-    Console.WriteLine(row);
-}
+# Full-text search on an attribute
+# To combine FTS and vector search concurrently, see:
+# https://turbopuffer.com/docs/hybrid-search
+print(ns.query(
+  limit=10,
+  filters=("public", "Eq", True),
+  rank_by=("Sum", [
+      ("Product", 2, ("category", "BM25", "mammal")),
+      ("text", "BM25", "quick walrus"),
+  ]),
+))
+# [Row(id=1, vector=None, $dist=0.7549128)]
 
-// Regex filter — matches "pufferfish", "swordfish", "clownfish"
-var regexResult = await ns.Query(
-    new NamespaceQueryParams { Limit = 10, Filters = Filter.Regex("text", "\\w+fish") }
-);
-foreach (var row in regexResult.GetRows())
-{
-    Console.WriteLine(row);
-}
+# Regex filter — matches "pufferfish", "swordfish", "clownfish"
+print(ns.query(
+  limit=10,
+  filters=("text", "Regex", "\\w+fish"),
+))
 
-// Count documents grouped by category
-var groupedResult = await ns.Query(
-    new NamespaceQueryParams
-    {
-        AggregateBy = new Dictionary<string, AggregateBy>
+# Count documents grouped by category
+grouped_result = ns.query(
+    aggregate_by={"count_by_category": ("Count",)},
+    group_by=["category"],
+)
+print(grouped_result.aggregation_groups)
+# [Row(category=['fish'], count_by_category=1), Row(category=['mammal'], count_by_category=1)]
+```
+```python
+# $ pip install turbopuffer voyageai
+# Sample Python notebook:
+# https://colab.research.google.com/drive/17i4sfFTeJQkINCxjBaOGOZeENZr4ZaTE
+import os
+import uuid
+from typing import List
+
+import turbopuffer
+import voyageai
+
+tpuf = turbopuffer.Turbopuffer(
+    api_key=os.getenv("TURBOPUFFER_API_KEY"), # created here: https://turbopuffer.com/dashboard
+    region="gcp-us-central1", # choose best region: https://turbopuffer.com/docs/regions
+)
+
+namespace = os.getenv("TURBOPUFFER_NAMESPACE", f"quickstart-{uuid.uuid4().hex[:8]}")
+ns = tpuf.namespace(namespace)
+voyage = voyageai.Client(api_key=os.environ["VOYAGE_API_KEY"])
+
+# Create an embedding with Voyage.
+# Requires VOYAGE_API_KEY to be set:
+# https://dashboard.voyageai.com/organization/api-keys
+def embed(text: str) -> List[float]:
+    return voyage.embed([text], model="voyage-4-lite").embeddings[0]
+
+# Upsert documents with vectors and attributes
+ns.write(
+    upsert_rows=[
         {
-            ["count_by_category"] = AggregateBy.Count("id"),
+            'id': 1,
+            'vector': embed("walrus narwhal"),
+            'category': ["mammal"],
+            'public': True,
+            'text': "walrus narwhal",
         },
-        GroupBy = [GroupBy.Attr("category")],
+        {
+            'id': 2,
+            'vector': embed("pufferfish clownfish swordfish"),
+            'category': ["fish"],
+            'public': False,
+            'text': "pufferfish clownfish swordfish",
+        },
+    ],
+    distance_metric='cosine_distance',
+    schema={
+        "text": {
+            # Configure FTS/BM25. Other attributes get inferred types.
+            "type": "string",
+            # More schema & FTS options:
+            # https://turbopuffer.com/docs/write#schema
+            "full_text_search": True,
+            "regex": True,
+        },
+        "category": {
+            "type": "[]string",
+            "full_text_search": True,
+        },
     }
-);
-foreach (var group in groupedResult.GetAggregationGroups())
-{
-    Console.WriteLine(group);
-}
+)
 
-// Create an embedding with Voyage.
-// Requires VOYAGE_API_KEY to be set:
-// https://dashboard.voyageai.com/organization/api-keys
-static List<float> Embed(string text)
-{
-    var client = new EmbeddingClient(
-        "voyage-4-lite",
-        new ApiKeyCredential(Environment.GetEnvironmentVariable("VOYAGE_API_KEY")!),
-        new OpenAIClientOptions { Endpoint = new Uri("https://api.voyageai.com/v1") }
-    );
-    return [.. client.GenerateEmbedding(text).Value.ToFloats().Span];
-}
+# Query nearest neighbors with a filter
+print(ns.query(
+  rank_by=("vector", "ANN", embed("arctic sea mammal")),
+  limit=10,
+  filters=("public", "Eq", True),
+))
+# [Row(id=1, vector=None, $dist=0.42773545)]
+
+# Full-text search on an attribute
+# To combine FTS and vector search concurrently, see:
+# https://turbopuffer.com/docs/hybrid-search
+print(ns.query(
+  limit=10,
+  filters=("public", "Eq", True),
+  rank_by=("Sum", [
+      ("Product", 2, ("category", "BM25", "mammal")),
+      ("text", "BM25", "quick walrus"),
+  ]),
+))
+# [Row(id=1, vector=None, $dist=0.7549128)]
+
+# Regex filter — matches "pufferfish", "swordfish", "clownfish"
+print(ns.query(
+  limit=10,
+  filters=("text", "Regex", "\\w+fish"),
+))
+
+# Count documents grouped by category
+grouped_result = ns.query(
+    aggregate_by={"count_by_category": ("Count",)},
+    group_by=["category"],
+)
+print(grouped_result.aggregation_groups)
+# [Row(category=['fish'], count_by_category=1), Row(category=['mammal'], count_by_category=1)]
 ```
 ```ruby
 # $ gem install turbopuffer
@@ -5219,6 +5159,1166 @@ puts grouped_result.aggregation_groups
 # {category: ["fish"], count_by_category: 1}
 # {category: ["mammal"], count_by_category: 1}
 ```
+```rust
+// $ cargo add turbopuffer tokio --features tokio/full
+use std::time::{SystemTime, UNIX_EPOCH};
+
+use turbopuffer::Client;
+use turbopuffer::serde_json;
+use turbopuffer::types::{
+    AggregateBy, AttributeEmbedConfig, AttributeSchemaConfig, DistanceMetric, Expr, Filter, RankBy,
+    RankByText, Row,
+};
+
+#[tokio::main]
+async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    // The API key is read from TURBOPUFFER_API_KEY. Create one here: https://turbopuffer.com/dashboard
+    let client = Client::builder()
+        .region("gcp-us-central1") // choose best region: https://turbopuffer.com/docs/regions
+        .build()?;
+
+    let now = SystemTime::now().duration_since(UNIX_EPOCH)?.as_nanos();
+    let namespace =
+        std::env::var("TURBOPUFFER_NAMESPACE").unwrap_or_else(|_| format!("quickstart-{now}"));
+    let ns = client.namespace(namespace);
+
+    // Upsert documents with attributes
+    ns.write()
+        .upsert_rows([
+            Row::new(1)
+                .insert("category", ["mammal"])
+                .insert("public", true)
+                .insert("text", "walrus narwhal"),
+            Row::new(2)
+                .insert("category", ["fish"])
+                .insert("public", false)
+                .insert("text", "pufferfish clownfish swordfish"),
+        ])
+        .distance_metric(DistanceMetric::CosineDistance)
+        .schema([
+            (
+                "text",
+                // Configure FTS/BM25. Other attributes get inferred types.
+                AttributeSchemaConfig::new("string")
+                    // More schema & FTS options:
+                    // https://turbopuffer.com/docs/write#schema
+                    .full_text_search(true)
+                    .regex(true)
+                    // Native embeddings. Check the model is available in your region:
+                    // https://turbopuffer.com/docs/embedding#models
+                    .embed(AttributeEmbedConfig::new("nvidia/nemotron-3-embed-8b").dims(1024)),
+            ),
+            (
+                "category",
+                AttributeSchemaConfig::new("[]string").full_text_search(true),
+            ),
+        ])
+        .send()
+        .await?;
+
+    // Query nearest neighbors with a filter
+    let result = ns
+        .query()
+        .rank_by(RankBy::ann("text", Expr::embed("arctic sea mammal")))
+        .limit(10)
+        .filters(Filter::eq("public", true))
+        .send()
+        .await?;
+    println!("{}", serde_json::to_string_pretty(&result.rows)?);
+    // [
+    //   {"id": 1, "$dist": ...}
+    // ]
+
+    // Full-text search on an attribute
+    // To combine FTS and vector search concurrently, see:
+    // https://turbopuffer.com/docs/hybrid-search
+    let result = ns
+        .query()
+        .limit(10)
+        .filters(Filter::eq("public", true))
+        .rank_by(RankBy::sum([
+            RankByText::product(2.0, RankByText::bm25("category", "mammal")),
+            RankByText::bm25("text", "quick walrus"),
+        ]))
+        .send()
+        .await?;
+    println!("{}", serde_json::to_string_pretty(&result.rows)?);
+    // [
+    //   {"id": 1, "$dist": 0.7549128}
+    // ]
+
+    // Regex filter — matches "pufferfish", "swordfish", "clownfish"
+    let result = ns
+        .query()
+        .limit(10)
+        .filters(Filter::regex("text", r"\w+fish"))
+        .send()
+        .await?;
+    println!("{}", serde_json::to_string_pretty(&result.rows)?);
+
+    // Count documents grouped by category
+    let grouped_result = ns
+        .query()
+        .aggregate_by([("count_by_category", AggregateBy::count())])
+        .group_by(["category"])
+        .send()
+        .await?;
+    println!(
+        "{}",
+        serde_json::to_string_pretty(&grouped_result.aggregation_groups)?
+    );
+    // [
+    //   {"category": ["fish"], "count_by_category": 1},
+    //   {"category": ["mammal"], "count_by_category": 1}
+    // ]
+
+    Ok(())
+}
+```
+```rust
+// $ cargo add turbopuffer tokio reqwest --features tokio/full,reqwest/json
+use std::sync::LazyLock;
+use std::time::{SystemTime, UNIX_EPOCH};
+
+use turbopuffer::Client;
+use turbopuffer::serde_json::{self, Value, json};
+use turbopuffer::types::{
+    AggregateBy, AttributeSchemaConfig, DistanceMetric, Filter, RankBy, RankByText, Row,
+};
+
+// One client for every request, so that connections are reused.
+static HTTP: LazyLock<reqwest::Client> = LazyLock::new(reqwest::Client::new);
+
+/// Create an embedding with Cohere.
+/// Requires `COHERE_API_KEY` to be set (<https://dashboard.cohere.com/api-keys>).
+async fn embed(text: &str) -> Result<Vec<f32>, Box<dyn std::error::Error>> {
+    let api_key = std::env::var("COHERE_API_KEY").map_err(|_| "COHERE_API_KEY is not set")?;
+    let mut response: Value = HTTP
+        .post("https://api.cohere.com/v2/embed")
+        .bearer_auth(api_key)
+        .json(&json!({
+            "model": "embed-v4.0",
+            "input_type": "search_document",
+            "texts": [text],
+            "embedding_types": ["float"],
+        }))
+        .send()
+        .await?
+        .error_for_status()?
+        .json()
+        .await?;
+    let embedding = response
+        .pointer_mut("/embeddings/float/0")
+        .ok_or("unexpected response from Cohere")?
+        .take();
+    Ok(serde_json::from_value(embedding)?)
+}
+
+#[tokio::main]
+async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    // The API key is read from TURBOPUFFER_API_KEY. Create one here: https://turbopuffer.com/dashboard
+    let client = Client::builder()
+        .region("gcp-us-central1") // choose best region: https://turbopuffer.com/docs/regions
+        .build()?;
+
+    let now = SystemTime::now().duration_since(UNIX_EPOCH)?.as_nanos();
+    let namespace =
+        std::env::var("TURBOPUFFER_NAMESPACE").unwrap_or_else(|_| format!("quickstart-{now}"));
+    let ns = client.namespace(namespace);
+
+    // Upsert documents with vectors and attributes
+    ns.write()
+        .upsert_rows([
+            Row::new(1)
+                .vector(embed("walrus narwhal").await?)
+                .insert("category", ["mammal"])
+                .insert("public", true)
+                .insert("text", "walrus narwhal"),
+            Row::new(2)
+                .vector(embed("pufferfish clownfish swordfish").await?)
+                .insert("category", ["fish"])
+                .insert("public", false)
+                .insert("text", "pufferfish clownfish swordfish"),
+        ])
+        .distance_metric(DistanceMetric::CosineDistance)
+        .schema([
+            (
+                "text",
+                // Configure FTS/BM25. Other attributes get inferred types.
+                AttributeSchemaConfig::new("string")
+                    // More schema & FTS options:
+                    // https://turbopuffer.com/docs/write#schema
+                    .full_text_search(true)
+                    .regex(true),
+            ),
+            (
+                "category",
+                AttributeSchemaConfig::new("[]string").full_text_search(true),
+            ),
+        ])
+        .send()
+        .await?;
+
+    // Query nearest neighbors with a filter
+    let result = ns
+        .query()
+        .rank_by(RankBy::ann("vector", embed("arctic sea mammal").await?))
+        .limit(10)
+        .filters(Filter::eq("public", true))
+        .send()
+        .await?;
+    println!("{}", serde_json::to_string_pretty(&result.rows)?);
+    // [
+    //   {"id": 1, "$dist": 0.42773545}
+    // ]
+
+    // Full-text search on an attribute
+    // To combine FTS and vector search concurrently, see:
+    // https://turbopuffer.com/docs/hybrid-search
+    let result = ns
+        .query()
+        .limit(10)
+        .filters(Filter::eq("public", true))
+        .rank_by(RankBy::sum([
+            RankByText::product(2.0, RankByText::bm25("category", "mammal")),
+            RankByText::bm25("text", "quick walrus"),
+        ]))
+        .send()
+        .await?;
+    println!("{}", serde_json::to_string_pretty(&result.rows)?);
+    // [
+    //   {"id": 1, "$dist": 0.7549128}
+    // ]
+
+    // Regex filter — matches "pufferfish", "swordfish", "clownfish"
+    let result = ns
+        .query()
+        .limit(10)
+        .filters(Filter::regex("text", r"\w+fish"))
+        .send()
+        .await?;
+    println!("{}", serde_json::to_string_pretty(&result.rows)?);
+
+    // Count documents grouped by category
+    let grouped_result = ns
+        .query()
+        .aggregate_by([("count_by_category", AggregateBy::count())])
+        .group_by(["category"])
+        .send()
+        .await?;
+    println!(
+        "{}",
+        serde_json::to_string_pretty(&grouped_result.aggregation_groups)?
+    );
+    // [
+    //   {"category": ["fish"], "count_by_category": 1},
+    //   {"category": ["mammal"], "count_by_category": 1}
+    // ]
+
+    Ok(())
+}
+```
+```rust
+// $ cargo add turbopuffer tokio reqwest --features tokio/full,reqwest/json
+use std::sync::LazyLock;
+use std::time::{SystemTime, UNIX_EPOCH};
+
+use turbopuffer::Client;
+use turbopuffer::serde_json::{self, Value, json};
+use turbopuffer::types::{
+    AggregateBy, AttributeSchemaConfig, DistanceMetric, Filter, RankBy, RankByText, Row,
+};
+
+// One client for every request, so that connections are reused.
+static HTTP: LazyLock<reqwest::Client> = LazyLock::new(reqwest::Client::new);
+
+/// Create an embedding with Gemini.
+/// Requires `GEMINI_API_KEY` to be set (<https://aistudio.google.com/app/apikey>).
+async fn embed(text: &str) -> Result<Vec<f32>, Box<dyn std::error::Error>> {
+    let api_key = std::env::var("GEMINI_API_KEY").map_err(|_| "GEMINI_API_KEY is not set")?;
+    let mut response: Value = HTTP
+        .post("https://generativelanguage.googleapis.com/v1beta/models/gemini-embedding-001:embedContent")
+        .header("x-goog-api-key", api_key)
+        .json(&json!({
+            "model": "models/gemini-embedding-001",
+            "content": { "parts": [{ "text": text }] },
+            "taskType": "RETRIEVAL_DOCUMENT",
+        }))
+        .send()
+        .await?
+        .error_for_status()?
+        .json()
+        .await?;
+    let embedding = response
+        .pointer_mut("/embedding/values")
+        .ok_or("unexpected response from Gemini")?
+        .take();
+    Ok(serde_json::from_value(embedding)?)
+}
+
+#[tokio::main]
+async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    // The API key is read from TURBOPUFFER_API_KEY. Create one here: https://turbopuffer.com/dashboard
+    let client = Client::builder()
+        .region("gcp-us-central1") // choose best region: https://turbopuffer.com/docs/regions
+        .build()?;
+
+    let now = SystemTime::now().duration_since(UNIX_EPOCH)?.as_nanos();
+    let namespace =
+        std::env::var("TURBOPUFFER_NAMESPACE").unwrap_or_else(|_| format!("quickstart-{now}"));
+    let ns = client.namespace(namespace);
+
+    // Upsert documents with vectors and attributes
+    ns.write()
+        .upsert_rows([
+            Row::new(1)
+                .vector(embed("walrus narwhal").await?)
+                .insert("category", ["mammal"])
+                .insert("public", true)
+                .insert("text", "walrus narwhal"),
+            Row::new(2)
+                .vector(embed("pufferfish clownfish swordfish").await?)
+                .insert("category", ["fish"])
+                .insert("public", false)
+                .insert("text", "pufferfish clownfish swordfish"),
+        ])
+        .distance_metric(DistanceMetric::CosineDistance)
+        .schema([
+            (
+                "text",
+                // Configure FTS/BM25. Other attributes get inferred types.
+                AttributeSchemaConfig::new("string")
+                    // More schema & FTS options:
+                    // https://turbopuffer.com/docs/write#schema
+                    .full_text_search(true)
+                    .regex(true),
+            ),
+            (
+                "category",
+                AttributeSchemaConfig::new("[]string").full_text_search(true),
+            ),
+        ])
+        .send()
+        .await?;
+
+    // Query nearest neighbors with a filter
+    let result = ns
+        .query()
+        .rank_by(RankBy::ann("vector", embed("arctic sea mammal").await?))
+        .limit(10)
+        .filters(Filter::eq("public", true))
+        .send()
+        .await?;
+    println!("{}", serde_json::to_string_pretty(&result.rows)?);
+    // [
+    //   {"id": 1, "$dist": 0.42773545}
+    // ]
+
+    // Full-text search on an attribute
+    // To combine FTS and vector search concurrently, see:
+    // https://turbopuffer.com/docs/hybrid-search
+    let result = ns
+        .query()
+        .limit(10)
+        .filters(Filter::eq("public", true))
+        .rank_by(RankBy::sum([
+            RankByText::product(2.0, RankByText::bm25("category", "mammal")),
+            RankByText::bm25("text", "quick walrus"),
+        ]))
+        .send()
+        .await?;
+    println!("{}", serde_json::to_string_pretty(&result.rows)?);
+    // [
+    //   {"id": 1, "$dist": 0.7549128}
+    // ]
+
+    // Regex filter — matches "pufferfish", "swordfish", "clownfish"
+    let result = ns
+        .query()
+        .limit(10)
+        .filters(Filter::regex("text", r"\w+fish"))
+        .send()
+        .await?;
+    println!("{}", serde_json::to_string_pretty(&result.rows)?);
+
+    // Count documents grouped by category
+    let grouped_result = ns
+        .query()
+        .aggregate_by([("count_by_category", AggregateBy::count())])
+        .group_by(["category"])
+        .send()
+        .await?;
+    println!(
+        "{}",
+        serde_json::to_string_pretty(&grouped_result.aggregation_groups)?
+    );
+    // [
+    //   {"category": ["fish"], "count_by_category": 1},
+    //   {"category": ["mammal"], "count_by_category": 1}
+    // ]
+
+    Ok(())
+}
+```
+```rust
+// $ cargo add turbopuffer tokio reqwest --features tokio/full,reqwest/json
+use std::sync::LazyLock;
+use std::time::{SystemTime, UNIX_EPOCH};
+
+use turbopuffer::Client;
+use turbopuffer::serde_json::{self, Value, json};
+use turbopuffer::types::{
+    AggregateBy, AttributeSchemaConfig, DistanceMetric, Filter, RankBy, RankByText, Row,
+};
+
+// One client for every request, so that connections are reused.
+static HTTP: LazyLock<reqwest::Client> = LazyLock::new(reqwest::Client::new);
+
+/// Create an embedding with Qwen on Fireworks.
+/// Requires `FIREWORKS_API_KEY` to be set (<https://fireworks.ai/settings/users/api-keys>).
+async fn embed(text: &str) -> Result<Vec<f32>, Box<dyn std::error::Error>> {
+    let api_key = std::env::var("FIREWORKS_API_KEY").map_err(|_| "FIREWORKS_API_KEY is not set")?;
+    let mut response: Value = HTTP
+        .post("https://api.fireworks.ai/inference/v1/embeddings")
+        .bearer_auth(api_key)
+        .json(&json!({ "model": "fireworks/qwen3-embedding-8b", "input": text }))
+        .send()
+        .await?
+        .error_for_status()?
+        .json()
+        .await?;
+    let embedding = response
+        .pointer_mut("/data/0/embedding")
+        .ok_or("unexpected response from Fireworks")?
+        .take();
+    Ok(serde_json::from_value(embedding)?)
+}
+
+#[tokio::main]
+async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    // The API key is read from TURBOPUFFER_API_KEY. Create one here: https://turbopuffer.com/dashboard
+    let client = Client::builder()
+        .region("gcp-us-central1") // choose best region: https://turbopuffer.com/docs/regions
+        .build()?;
+
+    let now = SystemTime::now().duration_since(UNIX_EPOCH)?.as_nanos();
+    let namespace =
+        std::env::var("TURBOPUFFER_NAMESPACE").unwrap_or_else(|_| format!("quickstart-{now}"));
+    let ns = client.namespace(namespace);
+
+    // Upsert documents with vectors and attributes
+    ns.write()
+        .upsert_rows([
+            Row::new(1)
+                .vector(embed("walrus narwhal").await?)
+                .insert("category", ["mammal"])
+                .insert("public", true)
+                .insert("text", "walrus narwhal"),
+            Row::new(2)
+                .vector(embed("pufferfish clownfish swordfish").await?)
+                .insert("category", ["fish"])
+                .insert("public", false)
+                .insert("text", "pufferfish clownfish swordfish"),
+        ])
+        .distance_metric(DistanceMetric::CosineDistance)
+        .schema([
+            (
+                "text",
+                // Configure FTS/BM25. Other attributes get inferred types.
+                AttributeSchemaConfig::new("string")
+                    // More schema & FTS options:
+                    // https://turbopuffer.com/docs/write#schema
+                    .full_text_search(true)
+                    .regex(true),
+            ),
+            (
+                "category",
+                AttributeSchemaConfig::new("[]string").full_text_search(true),
+            ),
+        ])
+        .send()
+        .await?;
+
+    // Query nearest neighbors with a filter
+    let result = ns
+        .query()
+        .rank_by(RankBy::ann("vector", embed("arctic sea mammal").await?))
+        .limit(10)
+        .filters(Filter::eq("public", true))
+        .send()
+        .await?;
+    println!("{}", serde_json::to_string_pretty(&result.rows)?);
+    // [
+    //   {"id": 1, "$dist": 0.42773545}
+    // ]
+
+    // Full-text search on an attribute
+    // To combine FTS and vector search concurrently, see:
+    // https://turbopuffer.com/docs/hybrid-search
+    let result = ns
+        .query()
+        .limit(10)
+        .filters(Filter::eq("public", true))
+        .rank_by(RankBy::sum([
+            RankByText::product(2.0, RankByText::bm25("category", "mammal")),
+            RankByText::bm25("text", "quick walrus"),
+        ]))
+        .send()
+        .await?;
+    println!("{}", serde_json::to_string_pretty(&result.rows)?);
+    // [
+    //   {"id": 1, "$dist": 0.7549128}
+    // ]
+
+    // Regex filter — matches "pufferfish", "swordfish", "clownfish"
+    let result = ns
+        .query()
+        .limit(10)
+        .filters(Filter::regex("text", r"\w+fish"))
+        .send()
+        .await?;
+    println!("{}", serde_json::to_string_pretty(&result.rows)?);
+
+    // Count documents grouped by category
+    let grouped_result = ns
+        .query()
+        .aggregate_by([("count_by_category", AggregateBy::count())])
+        .group_by(["category"])
+        .send()
+        .await?;
+    println!(
+        "{}",
+        serde_json::to_string_pretty(&grouped_result.aggregation_groups)?
+    );
+    // [
+    //   {"category": ["fish"], "count_by_category": 1},
+    //   {"category": ["mammal"], "count_by_category": 1}
+    // ]
+
+    Ok(())
+}
+```
+```rust
+// $ cargo add turbopuffer tokio reqwest --features tokio/full,reqwest/json
+use std::sync::LazyLock;
+use std::time::{SystemTime, UNIX_EPOCH};
+
+use turbopuffer::Client;
+use turbopuffer::serde_json::{self, Value, json};
+use turbopuffer::types::{
+    AggregateBy, AttributeSchemaConfig, DistanceMetric, Filter, RankBy, RankByText, Row,
+};
+
+// One client for every request, so that connections are reused.
+static HTTP: LazyLock<reqwest::Client> = LazyLock::new(reqwest::Client::new);
+
+/// Create an embedding with Voyage.
+/// Requires `VOYAGE_API_KEY` to be set (<https://dashboard.voyageai.com/organization/api-keys>).
+async fn embed(text: &str) -> Result<Vec<f32>, Box<dyn std::error::Error>> {
+    let api_key = std::env::var("VOYAGE_API_KEY").map_err(|_| "VOYAGE_API_KEY is not set")?;
+    let mut response: Value = HTTP
+        .post("https://api.voyageai.com/v1/embeddings")
+        .bearer_auth(api_key)
+        .json(&json!({ "model": "voyage-4-lite", "input": text }))
+        .send()
+        .await?
+        .error_for_status()?
+        .json()
+        .await?;
+    let embedding = response
+        .pointer_mut("/data/0/embedding")
+        .ok_or("unexpected response from Voyage")?
+        .take();
+    Ok(serde_json::from_value(embedding)?)
+}
+
+#[tokio::main]
+async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    // The API key is read from TURBOPUFFER_API_KEY. Create one here: https://turbopuffer.com/dashboard
+    let client = Client::builder()
+        .region("gcp-us-central1") // choose best region: https://turbopuffer.com/docs/regions
+        .build()?;
+
+    let now = SystemTime::now().duration_since(UNIX_EPOCH)?.as_nanos();
+    let namespace =
+        std::env::var("TURBOPUFFER_NAMESPACE").unwrap_or_else(|_| format!("quickstart-{now}"));
+    let ns = client.namespace(namespace);
+
+    // Upsert documents with vectors and attributes
+    ns.write()
+        .upsert_rows([
+            Row::new(1)
+                .vector(embed("walrus narwhal").await?)
+                .insert("category", ["mammal"])
+                .insert("public", true)
+                .insert("text", "walrus narwhal"),
+            Row::new(2)
+                .vector(embed("pufferfish clownfish swordfish").await?)
+                .insert("category", ["fish"])
+                .insert("public", false)
+                .insert("text", "pufferfish clownfish swordfish"),
+        ])
+        .distance_metric(DistanceMetric::CosineDistance)
+        .schema([
+            (
+                "text",
+                // Configure FTS/BM25. Other attributes get inferred types.
+                AttributeSchemaConfig::new("string")
+                    // More schema & FTS options:
+                    // https://turbopuffer.com/docs/write#schema
+                    .full_text_search(true)
+                    .regex(true),
+            ),
+            (
+                "category",
+                AttributeSchemaConfig::new("[]string").full_text_search(true),
+            ),
+        ])
+        .send()
+        .await?;
+
+    // Query nearest neighbors with a filter
+    let result = ns
+        .query()
+        .rank_by(RankBy::ann("vector", embed("arctic sea mammal").await?))
+        .limit(10)
+        .filters(Filter::eq("public", true))
+        .send()
+        .await?;
+    println!("{}", serde_json::to_string_pretty(&result.rows)?);
+    // [
+    //   {"id": 1, "$dist": 0.42773545}
+    // ]
+
+    // Full-text search on an attribute
+    // To combine FTS and vector search concurrently, see:
+    // https://turbopuffer.com/docs/hybrid-search
+    let result = ns
+        .query()
+        .limit(10)
+        .filters(Filter::eq("public", true))
+        .rank_by(RankBy::sum([
+            RankByText::product(2.0, RankByText::bm25("category", "mammal")),
+            RankByText::bm25("text", "quick walrus"),
+        ]))
+        .send()
+        .await?;
+    println!("{}", serde_json::to_string_pretty(&result.rows)?);
+    // [
+    //   {"id": 1, "$dist": 0.7549128}
+    // ]
+
+    // Regex filter — matches "pufferfish", "swordfish", "clownfish"
+    let result = ns
+        .query()
+        .limit(10)
+        .filters(Filter::regex("text", r"\w+fish"))
+        .send()
+        .await?;
+    println!("{}", serde_json::to_string_pretty(&result.rows)?);
+
+    // Count documents grouped by category
+    let grouped_result = ns
+        .query()
+        .aggregate_by([("count_by_category", AggregateBy::count())])
+        .group_by(["category"])
+        .send()
+        .await?;
+    println!(
+        "{}",
+        serde_json::to_string_pretty(&grouped_result.aggregation_groups)?
+    );
+    // [
+    //   {"category": ["fish"], "count_by_category": 1},
+    //   {"category": ["mammal"], "count_by_category": 1}
+    // ]
+
+    Ok(())
+}
+```
+```typescript
+// $ npm install @turbopuffer/turbopuffer
+import { Turbopuffer } from "@turbopuffer/turbopuffer";
+
+const tpuf = new Turbopuffer({
+  apiKey: process.env.TURBOPUFFER_API_KEY, // created here: https://turbopuffer.com/dashboard
+  region: "gcp-us-central1", // choose best region: https://turbopuffer.com/docs/regions
+});
+
+const namespace = process.env.TURBOPUFFER_NAMESPACE ?? `quickstart-${Math.random().toString(36).slice(2, 10)}`;
+const ns = tpuf.namespace(namespace);
+
+// Upsert documents with attributes
+await ns.write({
+  upsert_rows: [
+    {
+      id: 1,
+      category: ["mammal"],
+      public: true,
+      text: "walrus narwhal",
+    },
+    {
+      id: 2,
+      category: ["fish"],
+      public: false,
+      text: "pufferfish clownfish swordfish",
+    },
+  ],
+  distance_metric: "cosine_distance",
+  schema: {
+    text: {
+      // Configure FTS/BM25. Other attributes have inferred types.
+      type: "string",
+      // More schema & FTS options:
+      // https://turbopuffer.com/docs/write#schema
+      full_text_search: true,
+      regex: true,
+      // Native embeddings. Check the model is available in your region:
+      // https://turbopuffer.com/docs/embedding#models
+      embed: { model: "nvidia/nemotron-3-embed-8b", dims: 1024 },
+    },
+    category: { type: "[]string", full_text_search: true },
+  },
+});
+
+// Query nearest neighbors with a filter
+let result = await ns.query({
+  rank_by: ["text", "ANN", ["Embed", "arctic sea mammal"]],
+  limit: 10,
+  filters: ["public", "Eq", true],
+});
+console.log(result.rows);
+// [{ '$dist': ..., id: 1 }]
+
+// Full-text search on an attribute
+// To combine FTS and vector search concurrently, see:
+// https://turbopuffer.com/docs/hybrid-search
+result = await ns.query({
+  limit: 10,
+  filters: ["public", "Eq", true],
+  rank_by: ["Sum", [
+    ["Product", 2, ["category", "BM25", "mammal"]],
+    ["text", "BM25", "quick walrus"],
+  ]],
+});
+console.log(result.rows);
+// [{ '$dist': 0.7549128, id: 1 }]
+
+// Regex filter — matches "pufferfish", "swordfish", "clownfish"
+result = await ns.query({
+  limit: 10,
+  filters: ["text", "Regex", "\\w+fish"],
+});
+console.log(result.rows);
+
+// Count documents grouped by category
+const groupedResult = await ns.query({
+  aggregate_by: { count_by_category: ["Count"] },
+  group_by: ["category"],
+});
+console.log(groupedResult.aggregation_groups);
+// [
+//   { category: ["fish"], count_by_category: 1 },
+//   { category: ["mammal"], count_by_category: 1 },
+// ]
+```
+```typescript
+// $ npm install @turbopuffer/turbopuffer cohere-ai
+import { Turbopuffer } from "@turbopuffer/turbopuffer";
+import { CohereClient } from "cohere-ai";
+
+const tpuf = new Turbopuffer({
+  apiKey: process.env.TURBOPUFFER_API_KEY, // created here: https://turbopuffer.com/dashboard
+  region: "gcp-us-central1", // choose best region: https://turbopuffer.com/docs/regions
+});
+
+const namespace = process.env.TURBOPUFFER_NAMESPACE ?? `quickstart-${Math.random().toString(36).slice(2, 10)}`;
+const ns = tpuf.namespace(namespace);
+const cohere = new CohereClient({ token: process.env.COHERE_API_KEY });
+
+// Create an embedding with Cohere.
+// Requires COHERE_API_KEY to be set (https://dashboard.cohere.com/api-keys)
+async function embed(text: string): Promise<number[]> {
+  return (await cohere.v2.embed({
+    model: "embed-v4.0",
+    inputType: "search_document",
+    texts: [text],
+    embeddingTypes: ["float"],
+  })).embeddings.float![0];
+}
+
+// Upsert documents with vectors and attributes
+await ns.write({
+  upsert_rows: [
+    {
+      id: 1,
+      vector: await embed("walrus narwhal"),
+      category: ["mammal"],
+      public: true,
+      text: "walrus narwhal",
+    },
+    {
+      id: 2,
+      vector: await embed("pufferfish clownfish swordfish"),
+      category: ["fish"],
+      public: false,
+      text: "pufferfish clownfish swordfish",
+    },
+  ],
+  distance_metric: "cosine_distance",
+  schema: {
+    text: {
+      // Configure FTS/BM25. Other attributes have inferred types (`public`: int).
+      type: "string",
+      // More schema & FTS options:
+      // https://turbopuffer.com/docs/write#schema
+      full_text_search: true,
+      regex: true,
+    },
+    category: { type: "[]string", full_text_search: true },
+  },
+});
+
+// Query nearest neighbors with a filter
+let result = await ns.query({
+  rank_by: ["vector", "ANN", await embed("arctic sea mammal")],
+  limit: 10,
+  filters: ["public", "Eq", true],
+});
+console.log(result.rows);
+// [{ '$dist': 0.42773545, id: 1 }]
+
+// Full-text search on an attribute
+// To combine FTS and vector search concurrently, see:
+// https://turbopuffer.com/docs/hybrid-search
+result = await ns.query({
+  limit: 10,
+  filters: ["public", "Eq", true],
+  rank_by: ["Sum", [
+    ["Product", 2, ["category", "BM25", "mammal"]],
+    ["text", "BM25", "quick walrus"],
+  ]],
+});
+console.log(result.rows);
+// [{ '$dist': 0.7549128, id: 1 }]
+
+// Regex filter — matches "pufferfish", "swordfish", "clownfish"
+result = await ns.query({
+  limit: 10,
+  filters: ["text", "Regex", "\\w+fish"],
+});
+console.log(result.rows);
+
+// Count documents grouped by category
+const groupedResult = await ns.query({
+  aggregate_by: { count_by_category: ["Count"] },
+  group_by: ["category"],
+});
+console.log(groupedResult.aggregation_groups);
+// [
+//   { category: ["fish"], count_by_category: 1 },
+//   { category: ["mammal"], count_by_category: 1 },
+// ]
+```
+```typescript
+// $ npm install @turbopuffer/turbopuffer @google/genai
+import { Turbopuffer } from "@turbopuffer/turbopuffer";
+import { GoogleGenAI } from "@google/genai";
+
+const tpuf = new Turbopuffer({
+  apiKey: process.env.TURBOPUFFER_API_KEY, // created here: https://turbopuffer.com/dashboard
+  region: "gcp-us-central1", // choose best region: https://turbopuffer.com/docs/regions
+});
+
+const namespace = process.env.TURBOPUFFER_NAMESPACE ?? `quickstart-${Math.random().toString(36).slice(2, 10)}`;
+const ns = tpuf.namespace(namespace);
+const gemini = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
+
+// Create an embedding with Gemini.
+// Requires GEMINI_API_KEY to be set (https://aistudio.google.com/app/apikey)
+async function embed(text: string): Promise<number[]> {
+  return (
+    await gemini.models.embedContent({
+      model: "gemini-embedding-001",
+      contents: text,
+      config: { taskType: "RETRIEVAL_DOCUMENT" },
+    })
+  ).embeddings![0].values!;
+}
+
+// Upsert documents with vectors and attributes
+await ns.write({
+  upsert_rows: [
+    {
+      id: 1,
+      vector: await embed("walrus narwhal"),
+      category: ["mammal"],
+      public: true,
+      text: "walrus narwhal",
+    },
+    {
+      id: 2,
+      vector: await embed("pufferfish clownfish swordfish"),
+      category: ["fish"],
+      public: false,
+      text: "pufferfish clownfish swordfish",
+    },
+  ],
+  distance_metric: "cosine_distance",
+  schema: {
+    text: {
+      // Configure FTS/BM25. Other attributes have inferred types (`public`: int).
+      type: "string",
+      // More schema & FTS options:
+      // https://turbopuffer.com/docs/write#schema
+      full_text_search: true,
+      regex: true,
+    },
+    category: { type: "[]string", full_text_search: true },
+  },
+});
+
+// Query nearest neighbors with a filter
+let result = await ns.query({
+  rank_by: ["vector", "ANN", await embed("arctic sea mammal")],
+  limit: 10,
+  filters: ["public", "Eq", true],
+});
+console.log(result.rows);
+// [{ '$dist': 0.42773545, id: 1 }]
+
+// Full-text search on an attribute
+// To combine FTS and vector search concurrently, see:
+// https://turbopuffer.com/docs/hybrid-search
+result = await ns.query({
+  limit: 10,
+  filters: ["public", "Eq", true],
+  rank_by: ["Sum", [
+    ["Product", 2, ["category", "BM25", "mammal"]],
+    ["text", "BM25", "quick walrus"],
+  ]],
+});
+console.log(result.rows);
+// [{ '$dist': 0.7549128, id: 1 }]
+
+// Regex filter — matches "pufferfish", "swordfish", "clownfish"
+result = await ns.query({
+  limit: 10,
+  filters: ["text", "Regex", "\\w+fish"],
+});
+console.log(result.rows);
+
+// Count documents grouped by category
+const groupedResult = await ns.query({
+  aggregate_by: { count_by_category: ["Count"] },
+  group_by: ["category"],
+});
+console.log(groupedResult.aggregation_groups);
+// [
+//   { category: ["fish"], count_by_category: 1 },
+//   { category: ["mammal"], count_by_category: 1 },
+// ]
+```
+```typescript
+// $ npm install @turbopuffer/turbopuffer openai
+import { Turbopuffer } from "@turbopuffer/turbopuffer";
+import OpenAI from "openai";
+
+const tpuf = new Turbopuffer({
+  apiKey: process.env.TURBOPUFFER_API_KEY, // created here: https://turbopuffer.com/dashboard
+  region: "gcp-us-central1", // choose best region: https://turbopuffer.com/docs/regions
+});
+
+const namespace = process.env.TURBOPUFFER_NAMESPACE ?? `quickstart-${Math.random().toString(36).slice(2, 10)}`;
+const ns = tpuf.namespace(namespace);
+const fireworks = new OpenAI({
+  apiKey: process.env.FIREWORKS_API_KEY,
+  baseURL: "https://api.fireworks.ai/inference/v1",
+});
+
+// Create an embedding with Qwen on Fireworks.
+// Requires FIREWORKS_API_KEY to be set (https://fireworks.ai/settings/users/api-keys)
+async function embed(text: string): Promise<number[]> {
+  return (
+    await fireworks.embeddings.create({
+      model: "fireworks/qwen3-embedding-8b",
+      input: text,
+      encoding_format: "float",
+    })
+  ).data[0].embedding;
+}
+
+// Upsert documents with vectors and attributes
+await ns.write({
+  upsert_rows: [
+    {
+      id: 1,
+      vector: await embed("walrus narwhal"),
+      category: ["mammal"],
+      public: true,
+      text: "walrus narwhal",
+    },
+    {
+      id: 2,
+      vector: await embed("pufferfish clownfish swordfish"),
+      category: ["fish"],
+      public: false,
+      text: "pufferfish clownfish swordfish",
+    },
+  ],
+  distance_metric: "cosine_distance",
+  schema: {
+    text: {
+      // Configure FTS/BM25. Other attributes have inferred types (`public`: int).
+      type: "string",
+      // More schema & FTS options:
+      // https://turbopuffer.com/docs/write#schema
+      full_text_search: true,
+      regex: true,
+    },
+    category: { type: "[]string", full_text_search: true },
+  },
+});
+
+// Query nearest neighbors with a filter
+let result = await ns.query({
+  rank_by: ["vector", "ANN", await embed("arctic sea mammal")],
+  limit: 10,
+  filters: ["public", "Eq", true],
+});
+console.log(result.rows);
+// [{ '$dist': 0.42773545, id: 1 }]
+
+// Full-text search on an attribute
+// To combine FTS and vector search concurrently, see:
+// https://turbopuffer.com/docs/hybrid-search
+result = await ns.query({
+  limit: 10,
+  filters: ["public", "Eq", true],
+  rank_by: ["Sum", [
+    ["Product", 2, ["category", "BM25", "mammal"]],
+    ["text", "BM25", "quick walrus"],
+  ]],
+});
+console.log(result.rows);
+// [{ '$dist': 0.7549128, id: 1 }]
+
+// Regex filter — matches "pufferfish", "swordfish", "clownfish"
+result = await ns.query({
+  limit: 10,
+  filters: ["text", "Regex", "\\w+fish"],
+});
+console.log(result.rows);
+
+// Count documents grouped by category
+const groupedResult = await ns.query({
+  aggregate_by: { count_by_category: ["Count"] },
+  group_by: ["category"],
+});
+console.log(groupedResult.aggregation_groups);
+// [
+//   { category: ["fish"], count_by_category: 1 },
+//   { category: ["mammal"], count_by_category: 1 },
+// ]
+```
+```typescript
+// $ npm install @turbopuffer/turbopuffer voyageai
+import { Turbopuffer } from "@turbopuffer/turbopuffer";
+import { VoyageAIClient } from "voyageai";
+
+const tpuf = new Turbopuffer({
+  apiKey: process.env.TURBOPUFFER_API_KEY, // created here: https://turbopuffer.com/dashboard
+  region: "gcp-us-central1", // choose best region: https://turbopuffer.com/docs/regions
+});
+
+const namespace = process.env.TURBOPUFFER_NAMESPACE ?? `quickstart-${Math.random().toString(36).slice(2, 10)}`;
+const ns = tpuf.namespace(namespace);
+const voyage = new VoyageAIClient({ apiKey: process.env.VOYAGE_API_KEY });
+
+// Create an embedding with Voyage.
+// Requires VOYAGE_API_KEY to be set:
+// https://dashboard.voyageai.com/organization/api-keys
+async function embed(text: string): Promise<number[]> {
+  return (await voyage.embed({
+    input: text,
+    model: "voyage-4-lite",
+  })).data[0].embedding;
+}
+
+// Upsert documents with vectors and attributes
+await ns.write({
+  upsert_rows: [
+    {
+      id: 1,
+      vector: await embed("walrus narwhal"),
+      category: ["mammal"],
+      public: true,
+      text: "walrus narwhal",
+    },
+    {
+      id: 2,
+      vector: await embed("pufferfish clownfish swordfish"),
+      category: ["fish"],
+      public: false,
+      text: "pufferfish clownfish swordfish",
+    },
+  ],
+  distance_metric: "cosine_distance",
+  schema: {
+    text: {
+      // Configure FTS/BM25. Other attributes have inferred
+      // types (`category`: str, `public`: int).
+      type: "string",
+      // More schema & FTS options:
+      // https://turbopuffer.com/docs/write#schema
+      full_text_search: true,
+      regex: true,
+    },
+    category: { type: "[]string", full_text_search: true },
+  },
+});
+
+// Query nearest neighbors with a filter
+let result = await ns.query({
+  rank_by: ["vector", "ANN", await embed("arctic sea mammal")],
+  limit: 10,
+  filters: ["public", "Eq", true],
+});
+console.log(result.rows);
+// [{ '$dist': 0.42773545, id: 1 }]
+
+// Full-text search on an attribute
+// To combine FTS and vector search concurrently, see:
+// https://turbopuffer.com/docs/hybrid-search
+result = await ns.query({
+  limit: 10,
+  filters: ["public", "Eq", true],
+  rank_by: ["Sum", [
+    ["Product", 2, ["category", "BM25", "mammal"]],
+    ["text", "BM25", "quick walrus"],
+  ]],
+});
+console.log(result.rows);
+// [{ '$dist': 0.7549128, id: 1 }]
+
+// Regex filter — matches "pufferfish", "swordfish", "clownfish"
+result = await ns.query({
+  limit: 10,
+  filters: ["text", "Regex", "\\w+fish"],
+});
+console.log(result.rows);
+
+// Count documents grouped by category
+const groupedResult = await ns.query({
+  aggregate_by: { count_by_category: ["Count"] },
+  group_by: ["category"],
+});
+console.log(groupedResult.aggregation_groups);
+// [
+//   { category: ["fish"], count_by_category: 1 },
+//   { category: ["mammal"], count_by_category: 1 },
+// ]
+```
 <!-- /multilang -->
 
 ## Conditional writes
@@ -5249,43 +6349,27 @@ curl $TPUF_URL/v2/namespaces/$TPUF_NAMESPACE \
  }'
 # {"rows_affected": 1, ...}
 ```
-```python
-# Only update if this write has a newer timestamp
-result = ns.write(
-    upsert_rows=[{
-        'id': 1,
-        'text': "updated walrus",
-        'category': ["mammal"],
-        'updated_at': "2024-04-16T09:27:32Z",
-    }],
-    upsert_condition=(
-        'Or', [
-            ('updated_at', 'Lt', {'$ref_new': 'updated_at'}),
-            ('updated_at', 'Eq', None),
-        ]
-    ),
-    distance_metric='cosine_distance',
-)
-print(result.rows_affected)  # 1
-```
-```typescript
+```cs
 // Only update if this write has a newer timestamp
-const result = await ns.write({
-  upsert_rows: [
+var writeResult = await ns.Write(
+    new NamespaceWriteParams
     {
-      id: 1,
-      text: "updated walrus",
-      category: ["mammal"],
-      updated_at: "2024-04-16T09:27:32Z",
-    },
-  ],
-  upsert_condition: ["Or", [
-    ["updated_at", "Lt", { $ref_new: "updated_at" }],
-    ["updated_at", "Eq", null],
-  ]],
-  distance_metric: "cosine_distance",
-});
-console.log(result.rows_affected); // 1
+        UpsertRows =
+        [
+            new Row()
+                .Set("id", 1)
+                .Set("text", "updated walrus")
+                .Set("category", new[] { "mammal" })
+                .Set("updated_at", "2024-04-16T09:27:32Z"),
+        ],
+        UpsertCondition = Filter.Or(
+            Filter.Lt("updated_at", Expr.RefNew("updated_at")),
+            Filter.Eq("updated_at", null)
+        ),
+        DistanceMetric = DistanceMetric.CosineDistance,
+    }
+);
+Console.WriteLine(writeResult.RowsAffected); // 1
 ```
 ```go
 	res, err := ns.Write(ctx, turbopuffer.NamespaceWriteParams{
@@ -5328,27 +6412,24 @@ console.log(result.rows_affected); // 1
     );
     System.out.println(writeResult.rowsAffected()); // 1
 ```
-```cs
-// Only update if this write has a newer timestamp
-var writeResult = await ns.Write(
-    new NamespaceWriteParams
-    {
-        UpsertRows =
-        [
-            new Row()
-                .Set("id", 1)
-                .Set("text", "updated walrus")
-                .Set("category", new[] { "mammal" })
-                .Set("updated_at", "2024-04-16T09:27:32Z"),
-        ],
-        UpsertCondition = Filter.Or(
-            Filter.Lt("updated_at", Expr.RefNew("updated_at")),
-            Filter.Eq("updated_at", null)
-        ),
-        DistanceMetric = DistanceMetric.CosineDistance,
-    }
-);
-Console.WriteLine(writeResult.RowsAffected); // 1
+```python
+# Only update if this write has a newer timestamp
+result = ns.write(
+    upsert_rows=[{
+        'id': 1,
+        'text': "updated walrus",
+        'category': ["mammal"],
+        'updated_at': "2024-04-16T09:27:32Z",
+    }],
+    upsert_condition=(
+        'Or', [
+            ('updated_at', 'Lt', {'$ref_new': 'updated_at'}),
+            ('updated_at', 'Eq', None),
+        ]
+    ),
+    distance_metric='cosine_distance',
+)
+print(result.rows_affected)  # 1
 ```
 ```ruby
 # Only update if this write has a newer timestamp
@@ -5368,6 +6449,44 @@ result = ns.write(
   distance_metric: "cosine_distance",
 )
 puts result.rows_affected  # 1
+```
+```rust
+    use turbopuffer::types::ExprRefNew;
+
+    // Only update if this write has a newer timestamp
+    let result = ns
+        .write()
+        .upsert_rows([Row::new(1)
+            .insert("text", "updated walrus")
+            .insert("category", ["mammal"])
+            .insert("updated_at", "2024-04-16T09:27:32Z")])
+        .upsert_condition(Filter::or([
+            Filter::lt("updated_at", ExprRefNew::new("updated_at")),
+            Filter::eq("updated_at", serde_json::Value::Null),
+        ]))
+        .distance_metric(DistanceMetric::CosineDistance)
+        .send()
+        .await?;
+    println!("{}", result.rows_affected); // 1
+```
+```typescript
+// Only update if this write has a newer timestamp
+const result = await ns.write({
+  upsert_rows: [
+    {
+      id: 1,
+      text: "updated walrus",
+      category: ["mammal"],
+      updated_at: "2024-04-16T09:27:32Z",
+    },
+  ],
+  upsert_condition: ["Or", [
+    ["updated_at", "Lt", { $ref_new: "updated_at" }],
+    ["updated_at", "Eq", null],
+  ]],
+  distance_metric: "cosine_distance",
+});
+console.log(result.rows_affected); // 1
 ```
 <!-- /multilang -->
 
@@ -5395,28 +6514,19 @@ curl $TPUF_URL/v2/namespaces/$TPUF_BRANCH_NAMESPACE/query \
   -H 'Content-Type: application/json' \
   -d '{"rank_by": ["text", "ANN", ["Embed", "sea creature"]], "limit": 5}'
 ```
-```python
-branch_namespace = f"{namespace}-branch"
-branch = tpuf.namespace(branch_namespace)
-branch.write(branch_from_namespace=namespace)
-
-# Query the branch independently
-print(branch.query(
-    rank_by=("text", "ANN", ("Embed", "sea creature")),
-    limit=5,
-))
-```
-```typescript
-const branchNamespace = `${namespace}-branch`;
-const branch = tpuf.namespace(branchNamespace);
-await branch.write({ branch_from_namespace: namespace });
+```cs
+var branchName = namespaceName + "-branch";
+var branch = tpuf.Namespace(branchName);
+await branch.BranchFrom(new NamespaceBranchFromParams { SourceNamespace = namespaceName });
 
 // Query the branch independently
-const branchResult = await branch.query({
-  rank_by: ["text", "ANN", ["Embed", "sea creature"]],
-  limit: 5,
-});
-console.log(branchResult.rows);
+var branchResult = await branch.Query(
+    new NamespaceQueryParams { RankBy = RankBy.Ann("text", Expr.Embed("sea creature")), Limit = 5 }
+);
+foreach (var row in branchResult.GetRows())
+{
+    Console.WriteLine(row);
+}
 ```
 ```go
 	branchNamespace := namespace + "-branch"
@@ -5455,19 +6565,16 @@ console.log(branchResult.rows);
     );
     System.out.println(branchResult);
 ```
-```cs
-var branchName = namespaceName + "-branch";
-var branch = tpuf.Namespace(branchName);
-await branch.BranchFrom(new NamespaceBranchFromParams { SourceNamespace = namespaceName });
+```python
+branch_namespace = f"{namespace}-branch"
+branch = tpuf.namespace(branch_namespace)
+branch.write(branch_from_namespace=namespace)
 
-// Query the branch independently
-var branchResult = await branch.Query(
-    new NamespaceQueryParams { RankBy = RankBy.Ann("text", Expr.Embed("sea creature")), Limit = 5 }
-);
-foreach (var row in branchResult.GetRows())
-{
-    Console.WriteLine(row);
-}
+# Query the branch independently
+print(branch.query(
+    rank_by=("text", "ANN", ("Embed", "sea creature")),
+    limit=5,
+))
 ```
 ```ruby
 branch_namespace = "#{namespace}-branch"
@@ -5480,6 +6587,32 @@ result = branch.query(
   limit: 5,
 )
 puts result.rows
+```
+```rust
+    let branch_namespace = format!("{namespace}-branch");
+    let branch = client.namespace(branch_namespace);
+    branch.branch_from(&namespace).send().await?;
+
+    // Query the branch independently
+    let branch_result = branch
+        .query()
+        .rank_by(RankBy::ann("text", Expr::embed("sea creature")))
+        .limit(5)
+        .send()
+        .await?;
+    println!("{}", serde_json::to_string_pretty(&branch_result.rows)?);
+```
+```typescript
+const branchNamespace = `${namespace}-branch`;
+const branch = tpuf.namespace(branchNamespace);
+await branch.write({ branch_from_namespace: namespace });
+
+// Query the branch independently
+const branchResult = await branch.query({
+  rank_by: ["text", "ANN", ["Embed", "sea creature"]],
+  limit: 5,
+});
+console.log(branchResult.rows);
 ```
 <!-- /multilang -->
 

@@ -9,7 +9,7 @@ turbopuffer prioritizes simplicity, durability, and scalability by using object 
 
 ## Focused on First-Stage Retrieval
 
-turbopuffer focuses on efficient first-stage retrieval, providing a simple API to filter millions of documents down to a smaller candidate set. In a 2nd stage, you can then refine and rerank results using familiar programming languages, making your search logic easier to develop and maintain. Learn more about this approach in our [Hybrid Search](/docs/hybrid-search) guide. We've found that it's difficult to maintain search applications in mountains of idiosyncratic query language.
+turbopuffer focuses on efficient first-stage retrieval, providing a simple API to filter millions of documents down to a smaller candidate set. In a second stage, you can rerank that set with a managed model using [native reranking](/docs/reranking), or refine it in your own code using familiar programming languages, which keeps your search logic easy to develop and maintain. Learn more about this approach in our [Hybrid Search](/docs/hybrid-search) guide. We've found that it's difficult to maintain search applications in mountains of idiosyncratic query language.
 
 ## Optimized for Accuracy
 
@@ -55,17 +55,17 @@ details.
 
 ## Comparison
 
-| turbopuffer excels at                                                                       | turbopuffer may not currently be the best fit for                                                                                              |
-|---------------------------------------------------------------------------------------------|------------------------------------------------------------------------------------------------------------------------------------------------|
-| Large scale (100B+ documents/vectors) with lots of namespaces (tens of millions)              | Low scale, free tier                                                                                                                           |
-| Naturally sharded data (e.g. B2B where each tenant's data is isolated in its own namespace) | Extensive 1st-stage ranking (we encourage generating a candidate set with hybrid search and refining/re-ranking further in your own 2nd stage) |
-| Cost-effectiveness                                                                          | Built-in 2nd-stage re-ranking (we encourage you to do it in `{search.py,search.ts,..}`)                                                        |
-| Fast cold starts                                                                            | Built-in embedding (this is a few lines of code at most)                                                                                                                     |
-| Reliability                                                                                 | Open Source                                                                                                                                    |
-| Hybrid search (BM25 + vector search)                                                        |                                                                                                                                                |
-| Support from DB Engineers                                                                   |                                                                                                                                                |
-| Deploy into your VPC (BYOC)                                                                 |                                                                                                                                                |
-| Heavy writes (Appends, Updates and Deletes)                                                 |                                                                                                                                                |
+| turbopuffer excels at                                                                       | turbopuffer may not currently be the best fit for                                                                              |
+|---------------------------------------------------------------------------------------------|--------------------------------------------------------------------------------------------------------------------------------|
+| Large scale (100B+ documents/vectors) with lots of namespaces (tens of millions)            | Low scale, free tier                                                                                                           |
+| Naturally sharded data (e.g. B2B where each tenant's data is isolated in its own namespace) | Extensive first-stage ranking (we encourage generating a candidate set with hybrid search and reranking it in a second stage) |
+| Cost-effectiveness                                                                          | Open Source                                                                                                                    |
+| Fast cold starts                                                                            |                                                                                                                                |
+| Reliability                                                                                 |                                                                                                                                |
+| Hybrid search (BM25 + vector search)                                                        |                                                                                                                                |
+| Support from DB Engineers                                                                   |                                                                                                                                |
+| Deploy into your VPC (BYOC)                                                                 |                                                                                                                                |
+| Heavy writes (Appends, Updates and Deletes)                                                 |                                                                                                                                |
 
 For more details, see [Guarantees](/docs/guarantees), [Limits](/docs/limits), and [Architecture](/docs/architecture) pages.
 
